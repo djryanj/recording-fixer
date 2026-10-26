@@ -502,7 +502,8 @@ describe('Settings (export defaults and ffmpeg)', () => {
     await mount();
     const d = await open();
     expect(within(d).getByText(/free audio converter/)).toBeInTheDocument();
-    expect(d).toHaveTextContent(/do not need it for repairing files, playing them, editing, or saving as AIFF/);
+    expect(d).toHaveTextContent(/even when Apple's AAC encoder does the encoding/);
+    expect(d).toHaveTextContent(/do not need ffmpeg for repairing files, playing them, editing, or saving as AIFF/);
   });
 
   it('shows where ffmpeg was found, its version, and the encoders it offers', async () => {
