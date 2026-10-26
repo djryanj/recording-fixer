@@ -569,3 +569,75 @@ describe('Settings (export defaults and ffmpeg)', () => {
     expect(await screen.findByRole('dialog', { name: 'Settings' })).toBeInTheDocument();
   });
 });
+describe('updates and troubleshooting', () => {
+  const newer = { current: '0.1.0', latest: '0.2.0', url: 'https://github.com/djryanj/recording-fixer/releases/tag/v0.2.0', newer: true };
+  const open = async () => {
+    await user().click(screen.getByRole('button', { name: /Settings/ }));
+    return screen.findByRole('dialog', { name: 'Settings' });
+  };
+
+  it('looks for a newer version once at start and says nothing when up to date', async () => {
+    await mount();
+    await waitFor(() => expect(backend.of('check_for_update')).toHaveLength(1));
+    expect(screen.queryByText(/Update available/)).toBeNull();
+  });
+
+  it('offers a newer version in the status bar and opens its release page', async () => {
+    const u = user();
+    await mount({ update: newer });
+    const btn = await screen.findByRole('button', { name: /Update available: v0\.2\.0/ });
+    await u.click(btn);
+    await waitFor(() => expect(backend.of('plugin:opener|open_url').at(-1)).toMatchObject({ url: newer.url }));
+  });
+
+  it('does not ask at all when switched off, or when it already asked today', async () => {
+    localStorage.setItem('updateCheck.v1', JSON.stringify({ enabled: false }));
+    await mount();
+    expect(backend.of('check_for_update')).toHaveLength(0);
+    document.body.innerHTML = '';
+    localStorage.setItem('updateCheck.v1', JSON.stringify({ lastChecked: Date.now() - 60_000 }));
+    await mount();
+    expect(backend.of('check_for_update')).toHaveLength(0);
+  });
+
+  it('a failed check (offline) is silent', async () => {
+    await mount({ failures: { check_for_update: 'curl was not found' } });
+    await waitFor(() => expect(backend.of('check_for_update')).toHaveLength(1));
+    expect(screen.queryByText(/curl/)).toBeNull();
+    expect(screen.queryByText(/Update available/)).toBeNull();
+  });
+
+  it('Settings can check on demand, and remembers the automatic-check switch', async () => {
+    const u = user();
+    await mount({ update: newer });
+    const d = await open();
+    const sec = within(d).getByRole('region', { name: 'Updates and privacy' });
+    expect(sec).toHaveTextContent('collects nothing');
+    await u.click(within(sec).getByRole('button', { name: 'Check now' }));
+    expect(await within(sec).findByRole('status')).toHaveTextContent('Version 0.2.0 is available');
+    await u.click(within(sec).getByRole('checkbox', { name: /Look for a newer version/ }));
+    expect(JSON.parse(localStorage.getItem('updateCheck.v1')!).enabled).toBe(false);
+    await u.click(within(sec).getByRole('button', { name: 'Privacy policy' }));
+    await waitFor(() => expect(backend.of('plugin:opener|open_url').at(-1)).toMatchObject({ url: 'https://github.com/djryanj/recording-fixer/blob/main/PRIVACY.md' }));
+  });
+
+  it('Settings says plainly when the check could not be made', async () => {
+    const u = user();
+    await mount({ failures: { check_for_update: 'offline' } });
+    const sec = within(await open()).getByRole('region', { name: 'Updates and privacy' });
+    await u.click(within(sec).getByRole('button', { name: 'Check now' }));
+    expect(await within(sec).findByRole('status')).toHaveTextContent('Could not check: offline');
+  });
+
+  it('shows the log file and copies the log for a bug report', async () => {
+    const u = user();
+    await mount();
+    const writeText = vi.spyOn(navigator.clipboard, 'writeText'); // user-event provides the clipboard
+    const sec = within(await open()).getByRole('region', { name: 'Troubleshooting' });
+    await u.click(within(sec).getByRole('button', { name: 'Show log file' }));
+    await waitFor(() => expect(backend.of('reveal_in_folder').at(-1)).toMatchObject({ path: 'C:/logs/recording-fixer.log' }));
+    await u.click(within(sec).getByRole('button', { name: 'Copy log to clipboard' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining('starting')));
+    expect(sec).toHaveTextContent('Copied');
+  });
+});
