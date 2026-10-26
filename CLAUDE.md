@@ -66,7 +66,7 @@ Audio starts after the `SSND` header, at byte 54 when offset and blockSize are 0
 ## Commands
 
 - The app version comes from `[workspace.package] version` in the root `Cargo.toml` (shown in the status bar and Settings > About via the app plugin; `tauri.conf.json` deliberately has no version). The GitHub URL lives in `ui/src/lib/about.ts` and the root `Cargo.toml`; the owner/repo in it was a guess, so correct it if the repository lives elsewhere.
-- Releases: `just prepare-release X.Y.Z[-rc.N]` (branch + version bump via `scripts/release.mjs`, changelog closed only for final releases) then PR, merge, `just tag-release X.Y.Z`. The tag push is meant to trigger a release workflow, which does not exist yet.
+- Releases: `just prepare-release X.Y.Z[-rc.N]` (branch + version bump via `scripts/release.mjs`, changelog closed only for final releases) then PR, merge, `just tag-release X.Y.Z`. The tag push starts `.github/workflows/release.yml` (build both OSes with the bundled ffmpeg, sign if configured, install the Windows installer and run the e2e suite on it, then draft the GitHub release); see docs/RELEASING.md. Release builds use `src-tauri/tauri.release.conf.json` (ffmpeg sidecar + licence resources; `scripts/fetch-ffmpeg.mjs`, `scripts/build-ffmpeg-macos.sh`); dev/CI builds do not need the binary. User docs: docs/USER-GUIDE.md (linked from Settings > About): keep it in step with the UI.
 - Shortcuts live in the `justfile` (`just check`, `just test`, `just e2e`, `just ci`, ...); `just` is a documented developer prerequisite (README "Install just"). Keep the README table and the justfile in step.
 - `cargo test --workspace` runs the Rust tests (ffmpeg tests skip if ffmpeg is absent)
 - `cargo test --workspace -- --ignored` runs tests needing the full sample files in the repo root
@@ -122,7 +122,7 @@ Inputs are 0.2–3+ GB each, and users may have dozens. Speed and memory are fir
 
 - Goal: one download per platform. Tauri bundles: Windows NSIS `.exe` (and optionally `.msi`), macOS universal `.dmg`. Built by CI on `windows-latest` and `macos-latest`.
 - ffmpeg/ffprobe (LGPL build) ship as Tauri **sidecars** (`bundle.externalBin`). Sidecar files must be named with the target triple, e.g. `binaries/ffmpeg-x86_64-pc-windows-msvc.exe`, `binaries/ffmpeg-aarch64-apple-darwin`. The user-supplied ffmpeg setting always overrides the bundled one.
-- Not bundled: Apple's AAC encoder (user installs it), future VST3 host (will be an additional sidecar).
+- Not bundled: Apple's AAC encoder (user installs it), future VST3 host (will be an additional sidecar). ffmpeg IS bundled in release builds (LGPL, see docs/THIRD-PARTY.md); ASIO is included by default.
 - Installer must bootstrap WebView2 on Windows 10 (`webviewInstallMode`).
 - Signing is a later decision. Unsigned builds trigger SmartScreen (Windows) and Gatekeeper (macOS, needs right-click → Open). Proper release needs a Windows code-signing cert / Azure Trusted Signing and an Apple Developer account for notarisation.
 - Release checklist: include the LGPL license text and a link to the exact source/build of the bundled ffmpeg; list third-party licenses; verify the app launches on a clean machine with no dev tools.

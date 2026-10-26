@@ -22,6 +22,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '../..');
 const exe = process.env.APP_EXE ?? join(root, 'target', 'debug', process.platform === 'win32' ? 'recording-fixer.exe' : 'recording-fixer');
 const edgedriver = process.env.EDGEDRIVER ?? join(here, '.tools', 'edgedriver', 'msedgedriver.exe');
+// The version the app under test must report: the one in the root Cargo.toml (release candidates too).
+const APP_VERSION = /\[workspace\.package\][^[]*?^version\s*=\s*"([^"]+)"/ms.exec(readFileSync(join(root, 'Cargo.toml'), 'utf8').replace(/\r\n/g, '\n'))[1];
 
 // ---- synthetic AIFF files ---------------------------------------------------------------------
 
@@ -313,11 +315,20 @@ describe('the real app', () => {
     assert.match(text, /AIFF/);
     assert.match(text, /Found/i);
     assert.match(text, /best first/i);
-    await driver.wait(async () => /v0\.1\.0/.test(await dialog.getText()), 5000, 'About to show the real app version');
+    await driver.wait(async () => (await dialog.getText()).includes(`v${APP_VERSION}`), 5000, 'About to show the real app version');
     assert.match(text, /Report an issue on GitHub/i);
-    assert.match(await driver.findElement(By.css('footer.status .ver')).getText(), /^v0\.1\.0$/i, 'the status bar shows the version');
+    assert.equal((await driver.findElement(By.css('footer.status .ver')).getText()).toLowerCase(), `v${APP_VERSION}`.toLowerCase(), 'the status bar shows the version');
     await clickXp("//div[@role='dialog']" + XP.button('Done'));
     await driver.wait(async () => (await driver.findElements(By.xpath("//div[@aria-label='Settings']"))).length === 0, 5000);
+  });
+
+  // Only when testing an installed release (the release workflow): the ffmpeg in use must be the one shipped with the app.
+  it('uses the ffmpeg that came with the app', { skip: !process.env.E2E_EXPECT_BUNDLED_FFMPEG }, async () => {
+    await clickXp("//button[contains(.,'Settings')]");
+    const dialog = await find("//div[@role='dialog'][@aria-label='Settings']");
+    const found = await (await dialog.findElement(By.css('.path'))).getText();
+    assert.ok(found.toLowerCase().startsWith(dirname(exe).toLowerCase()), `ffmpeg should be inside ${dirname(exe)}, but is ${found}`);
+    await clickXp("//div[@role='dialog']" + XP.button('Done'));
   });
 
   it('in the editor: click to play from there, drag across to zoom, drag a name bar to reorder', async (t) => {

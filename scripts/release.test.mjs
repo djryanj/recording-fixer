@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { cargoVersion, isPrerelease, SEMVER, setCargoVersion, stampChangelog } from './release.mjs';
+import { cargoVersion, isPrerelease, releaseNotes, SEMVER, setCargoVersion, stampChangelog } from './release.mjs';
 
 const CARGO = `[workspace]
 members = ["a"]
@@ -77,5 +77,36 @@ describe('closing the changelog', () => {
   it('keeps Windows line endings', () => {
     const out = stampChangelog(entries.replace(/\n/g, '\r\n'), '0.2.0', '2026-10-30');
     assert.ok(out.includes('\r\n') && !/[^\r]\n/.test(out));
+  });
+});
+
+describe('release notes', () => {
+  const log = `# Changelog
+
+## [Unreleased]
+
+- Pending.
+
+## [0.2.0] - 2026-02-02
+
+- Two.
+
+## [0.1.0] - 2026-01-01
+
+- One.
+`;
+
+  it("is the version's own section", () => {
+    assert.equal(releaseNotes(log, '0.2.0'), '- Two.');
+    assert.equal(releaseNotes(log, '0.1.0'), '- One.');
+  });
+
+  it('for a release candidate, is the section of the version it leads to, else what is unreleased', () => {
+    assert.equal(releaseNotes(log, '0.2.0-rc.1'), '- Two.');
+    assert.equal(releaseNotes(log, '0.3.0-rc.1'), '- Pending.');
+  });
+
+  it('is empty rather than wrong when there is no changelog section', () => {
+    assert.equal(releaseNotes('# Changelog\n', '1.0.0'), '');
   });
 });

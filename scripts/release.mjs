@@ -71,6 +71,24 @@ export function stampChangelog(text, version, date) {
   return crlf ? text2.replace(/\n/g, '\r\n') : text2;
 }
 
+/**
+ * The changelog text that goes into the GitHub release for `version`: its own dated section, else (for a
+ * pre-release) the section of the version it leads up to, else what is still under "Unreleased".
+ */
+export function releaseNotes(text, version) {
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const base = version.split('-')[0];
+  const esc = (v) => v.replace(/\./g, '\\.');
+  const find = (re) => lines.findIndex((l) => re.test(l));
+  let at = find(new RegExp(`^## \\[${esc(version)}\\]`));
+  if (at === -1 && isPrerelease(version)) at = find(new RegExp(`^## \\[${esc(base)}\\]`));
+  if (at === -1) at = find(/^## \[Unreleased\]/i);
+  if (at === -1) return '';
+  let end = at + 1;
+  while (end < lines.length && !/^## /.test(lines[end])) end++;
+  return lines.slice(at + 1, end).join('\n').trim();
+}
+
 // ---- the command line ------------------------------------------------------------------------
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -131,6 +149,22 @@ Release branch ready. Next:
   4. just tag-release ${version}     (tags main and pushes the tag: the last step)`);
 }
 
+/** What the release workflow needs to know about the tag it was started by (it prints GitHub output lines). */
+function verify(tagName) {
+  const cargo = cargoVersion(read('Cargo.toml'));
+  const ui = JSON.parse(read('ui/package.json')).version;
+  if (cargo !== ui) throw new Error(`Cargo.toml says ${cargo} but ui/package.json says ${ui}`);
+  if (tagName && tagName !== `v${cargo}`) throw new Error(`the tag is ${tagName} but the app version is ${cargo}`);
+  console.log(`version=${cargo}`);
+  console.log(`prerelease=${isPrerelease(cargo)}`);
+}
+
+function notes(version) {
+  const body = releaseNotes(read('CHANGELOG.md'), version);
+  const kind = isPrerelease(version) ? 'Release candidate' : 'Release';
+  console.log(`${kind} ${version}.\n\n${body || 'See the changelog.'}`);
+}
+
 function tag(version) {
   requireCleanMain({ pull: false });
   const found = { 'Cargo.toml': cargoVersion(read('Cargo.toml')), 'ui/package.json': JSON.parse(read('ui/package.json')).version };
@@ -158,10 +192,11 @@ const invokedDirectly = process.argv[1] && fileURLToPath(import.meta.url) === pr
 if (invokedDirectly) {
   const [command, version, ...flags] = process.argv.slice(2);
   try {
-    if (!['prepare', 'tag'].includes(command) || !version || !SEMVER.test(version)) {
-      throw new Error('usage: node scripts/release.mjs prepare|tag X.Y.Z[-rc.N] [--files-only]');
-    }
-    if (command === 'prepare') prepare(version, { filesOnly: flags.includes('--files-only') });
+    if (command === 'verify') verify(version ?? '');
+    else if (command === 'notes' && version && SEMVER.test(version)) notes(version);
+    else if (!['prepare', 'tag'].includes(command) || !version || !SEMVER.test(version)) {
+      throw new Error('usage: node scripts/release.mjs prepare|tag X.Y.Z[-rc.N] [--files-only] | verify [vX.Y.Z] | notes X.Y.Z');
+    } else if (command === 'prepare') prepare(version, { filesOnly: flags.includes('--files-only') });
     else tag(version);
   } catch (e) {
     console.error(`Error: ${e.message}`);

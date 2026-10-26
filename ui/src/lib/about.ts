@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 /** Where the source lives and where problems are reported. */
 export const REPO_URL = 'https://github.com/djryanj/recording-fixer';
 export const ISSUES_URL = `${REPO_URL}/issues`;
+export const GUIDE_URL = `${REPO_URL}/blob/main/docs/USER-GUIDE.md`;
 export const PRIVACY_URL = `${REPO_URL}/blob/main/PRIVACY.md`;
 
 // These call the app and opener plugins' commands directly, through the same `invoke` as the rest of

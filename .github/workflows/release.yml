@@ -1,0 +1,258 @@
+name: Release
+
+# Pushing a tag like v0.1.0 or v0.1.0-rc.1 (see `just tag-release`) builds the installers and puts them on a
+# DRAFT GitHub release for review; nothing is public until it is published by hand.
+# Running it from the Actions tab (workflow_dispatch) is a trial: everything is built and tested,
+# the files are kept as workflow artifacts, nothing is released.
+#
+# The Windows installer is installed and driven by the end-to-end suite before anything is published, so
+# what ships is what was tested (including the bundled ffmpeg). macOS has no WebDriver; its build is
+# covered by the component tests and CI.
+#
+# Signing is optional and switched on by repository settings; see docs/RELEASING.md.
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: Check the version
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - id: v
+        env:
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: node scripts/release.mjs verify "$TAG" >> "$GITHUB_OUTPUT"
+      - name: The tagged commit is on main
+        if: github.ref_type == 'tag'
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Windows, os: windows-latest }
+          - { name: macOS, os: macos-latest }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: UI dependencies
+        run: npm --prefix ui ci
+
+      # ---- the ffmpeg that ships inside the app ----
+      - name: ffmpeg (Windows: LGPL build, checksum verified)
+        if: runner.os == 'Windows'
+        run: node scripts/fetch-ffmpeg.mjs --target x86_64-pc-windows-msvc
+      - name: ffmpeg (macOS: built from source, LGPL only)
+        if: runner.os == 'macOS'
+        run: node scripts/fetch-ffmpeg.mjs --target universal-apple-darwin
+
+      # ---- Windows ----
+      - name: Install LLVM (ASIO needs libclang)
+        if: runner.os == 'Windows'
+        run: choco install llvm -y --no-progress
+      - name: Build the installer (Windows, with ASIO)
+        if: runner.os == 'Windows'
+        run: npm --prefix ui exec -- tauri build --config src-tauri/tauri.release.conf.json --bundles nsis
+        env:
+          LIBCLANG_PATH: 'C:\Program Files\LLVM\bin'
+      - name: Find the installer
+        if: runner.os == 'Windows'
+        id: win
+        shell: bash
+        run: |
+          set -euo pipefail
+          installer="$(ls target/release/bundle/nsis/*-setup.exe | head -n 1)"
+          echo "installer=$installer" >> "$GITHUB_OUTPUT"
+      - name: Upload the unsigned installer for signing
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORGANIZATION_ID != ''
+        id: unsigned
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unsigned-windows-installer
+          path: ${{ steps.win.outputs.installer }}
+          retention-days: 7
+      - name: Sign the installer (SignPath)
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2.3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+      - name: Use the signed installer
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORGANIZATION_ID != ''
+        shell: bash
+        env:
+          INSTALLER: ${{ steps.win.outputs.installer }}
+        run: cp -f signed/*.exe "$INSTALLER"
+
+      # ---- macOS ----
+      - name: Is macOS signing set up?
+        if: runner.os == 'macOS'
+        id: apple
+        env:
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+        run: echo "signed=$([ -n "$CERT" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - name: Build the app and disk image (macOS, signed and notarized)
+        if: runner.os == 'macOS' && steps.apple.outputs.signed == 'true'
+        run: npm --prefix ui exec -- tauri build --config src-tauri/tauri.release.conf.json --bundles app,dmg --target universal-apple-darwin -- --no-default-features
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - name: Build the app and disk image (macOS, unsigned)
+        if: runner.os == 'macOS' && steps.apple.outputs.signed != 'true'
+        run: npm --prefix ui exec -- tauri build --config src-tauri/tauri.release.conf.json --bundles app,dmg --target universal-apple-darwin -- --no-default-features
+
+      # ---- the same checks on both ----
+      - name: Gather the files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir dist
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp target/release/bundle/nsis/*-setup.exe dist/
+          else
+            cp target/universal-apple-darwin/release/bundle/dmg/*.dmg dist/
+          fi
+          cp src-tauri/binaries/FFMPEG-BUILD.txt "dist/FFMPEG-BUILD-$RUNNER_OS.txt"
+          ( cd dist && for f in *.exe *.dmg; do [ -f "$f" ] && { if command -v sha256sum >/dev/null; then sha256sum "$f"; else shasum -a 256 "$f"; fi; }; done > "SHA256SUMS-$RUNNER_OS.txt" )
+          cat "dist/SHA256SUMS-$RUNNER_OS.txt"
+
+      # ---- Windows: install the very installer that will be published, and run the end-to-end suite on it ----
+      - name: Install the installer
+        if: runner.os == 'Windows'
+        id: install
+        shell: pwsh
+        run: |
+          $installer = (Get-ChildItem dist/*-setup.exe | Select-Object -First 1).FullName
+          # Silent per-user install into a known folder (no spaces: NSIS wants /D= last and unquoted).
+          $dir = Join-Path $env:RUNNER_TEMP 'installed-app'
+          Start-Process -FilePath $installer -ArgumentList "/S /D=$dir" -Wait
+          if (-not (Test-Path $dir)) { throw "not installed where expected: $dir" }
+          $exe = Get-ChildItem $dir -Filter *.exe | Where-Object { $_.Name -notmatch 'uninstall' } | Select-Object -First 1
+          Write-Host "installed: $($exe.FullName)"
+          Get-ChildItem $dir | ForEach-Object { Write-Host "  $($_.Name)" }
+          "exe=$($exe.FullName)" | Out-File -Append -FilePath $env:GITHUB_OUTPUT -Encoding utf8
+      - name: Tools for the end-to-end suite
+        if: runner.os == 'Windows'
+        run: cargo install tauri-driver --locked
+      - name: Matching Edge WebDriver
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dir = Get-ChildItem 'C:\Program Files (x86)\Microsoft\EdgeWebView\Application' -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d+\.' } | Sort-Object { [version]$_.Name } | Select-Object -Last 1
+          $v = if ($dir) { $dir.Name } else { (Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}').pv }
+          Write-Host "WebView2 runtime $v"
+          New-Item -ItemType Directory -Force ui/e2e/.tools | Out-Null
+          Invoke-WebRequest "https://msedgedriver.microsoft.com/$v/edgedriver_win64.zip" -OutFile ui/e2e/.tools/edgedriver.zip
+          Expand-Archive ui/e2e/.tools/edgedriver.zip ui/e2e/.tools/edgedriver -Force
+      - name: End-to-end tests on the installed app
+        if: runner.os == 'Windows'
+        run: npm --prefix ui run e2e
+        env:
+          APP_EXE: ${{ steps.install.outputs.exe }}
+          # The suite then also checks that MP3/AAC use the ffmpeg inside the install folder.
+          E2E_EXPECT_BUNDLED_FFMPEG: '1'
+      - name: Keep driver logs
+        if: failure() && runner.os == 'Windows'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-logs
+          path: ui/e2e/.tools/logs/
+          if-no-files-found: ignore
+
+      - name: Keep the files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ matrix.name }}
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Create the draft release
+    if: github.ref_type == 'tag'
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          cat dist/SHA256SUMS-*.txt > dist/SHA256SUMS.txt
+          rm dist/SHA256SUMS-*.txt
+          {
+            node scripts/release.mjs notes "$VERSION"
+            echo
+            echo "### Installing"
+            echo
+            echo "Windows: run the \`-setup.exe\`. macOS: open the \`.dmg\` and drag the app to Applications. If your system warns about an unknown publisher, see [Installing](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/docs/USER-GUIDE.md#installing). Checksums are in \`SHA256SUMS.txt\`."
+            echo
+            echo "Each installer includes ffmpeg (LGPL build); the exact build and its source are in the \`FFMPEG-BUILD-*.txt\` files and in THIRD-PARTY.md."
+          } > notes.md
+          flags=(--draft --verify-tag --title "Recording Fixer for Serato DJ $VERSION" --notes-file notes.md)
+          [ "$PRERELEASE" = "true" ] && flags+=(--prerelease)
+          gh release create "$TAG" dist/* "${flags[@]}"

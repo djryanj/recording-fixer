@@ -64,6 +64,8 @@ Maintainers only. The version lives in `[workspace.package]` in the root `Cargo.
 2. Open a PR from that branch into `main`, let CI pass, merge it.
 3. `git checkout main && git pull`, then `just tag-release 0.1.0-rc.1`. It refuses unless `main` is clean and matches `origin/main`, the versions match, and (for a final release) the changelog has the dated heading; then it tags and pushes the tag.
 
+The tag starts the **Release** workflow, which builds and tests the installers and drafts the GitHub release; see [docs/RELEASING.md](docs/RELEASING.md) for what it does, the trial run, and how to set up signing.
+
 A pre-release is not offered by the app's update check (which only looks at the latest *full* release), so announce candidates yourself.
 
 ## Logging and privacy
