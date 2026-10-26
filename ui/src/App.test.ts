@@ -499,6 +499,8 @@ describe('Settings (export defaults and ffmpeg)', () => {
     const d = await open();
     await u.click(within(d).getByRole('button', { name: 'Report an issue on GitHub' }));
     await waitFor(() => expect(backend.of('plugin:opener|open_url')).toHaveLength(2));
+    await u.click(within(d).getByRole('button', { name: 'User guide' }));
+    await waitFor(() => expect(backend.of('plugin:opener|open_url').at(-1)).toMatchObject({ url: 'https://github.com/djryanj/recording-fixer/blob/main/docs/USER-GUIDE.md' }));
     await u.click(within(d).getByRole('button', { name: 'Source code' }));
     await waitFor(() => expect(backend.of('plugin:opener|open_url').at(-1)).toMatchObject({ url: 'https://github.com/djryanj/recording-fixer' }));
   });

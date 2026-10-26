@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import type { ToolStatus } from './api';
-  import { appVersion, ISSUES_URL, openLink, PRIVACY_URL, REPO_URL } from './about';
+  import { appVersion, GUIDE_URL, ISSUES_URL, openLink, PRIVACY_URL, REPO_URL } from './about';
   import { api, type UpdateInfo } from './api';
   import { checkForUpdate, setUpdateChecks, updateChecksEnabled } from './updates';
   import { clampFade, defaultFormat, encoderLabel, sanitizeFormat, sanitizeLoudness, type FormatState, type LoudnessState } from './exportOptions';
@@ -207,6 +207,7 @@
         ASIO is a registered trademark of Steinberg Media Technologies GmbH.
       </p>
       <div class="row">
+        <button onclick={() => openLink(GUIDE_URL)}>User guide</button>
         <button onclick={() => openLink(ISSUES_URL)}>Report an issue on GitHub</button>
         <button class="ghost" onclick={() => openLink(REPO_URL)}>Source code</button>
       </div>

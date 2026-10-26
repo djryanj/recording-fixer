@@ -13,3 +13,6 @@ src-tauri/gen/
 # End-to-end tooling (downloaded WebDriver) and local debug output
 ui/e2e/.tools/
 *.hdrbak
+
+# The ffmpeg bundled into release builds (scripts/fetch-ffmpeg.mjs puts it here)
+src-tauri/binaries/

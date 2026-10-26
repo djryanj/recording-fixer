@@ -2,6 +2,8 @@
 
 A small, free, open-source desktop utility (Windows and macOS) for fixing broken recordings made with Serato DJ and combining those recordings. Licensed under the [GNU GPL v3 or later](LICENSE). It is not affiliated with or endorsed by Serato; "Serato" and "Serato DJ" are their trademarks, used here only to say what the tool works with.
 
+**New here? Read the [user guide](docs/USER-GUIDE.md)** (installing, repairing, editing, exporting, loudness).
+
 Found a problem? Please [open an issue](https://github.com/djryanj/recording-fixer/issues). The app shows its version in the bottom bar and under Settings > About.
 
 - **Finds** your recordings in Serato's `Recording` and `Recording temp` folders (or any folder you add).
@@ -214,6 +216,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. [CLAUDE.md
 ## Loudness (optional)
 
 When exporting you can choose **Match a loudness** (for example −14 LUFS for streaming) or **Raise to a peak limit**. It brings the whole set to the target, turns down stretches that are much louder than their surroundings (two tracks beatmixed) and turns up a track that was left too quiet, keeps breakdowns quiet, and uses a true-peak limiter so nothing goes over the limit. The output keeps the recording's own bit depth. It is off unless you choose it, because it changes the audio. The editor's **Loudness** tab lets you hear it while playing before you export. Details, measurements and suggested listening spots are in [docs/MAXIMIZER.md](docs/MAXIMIZER.md).
+
+## Releases
+
+Installers for Windows and macOS (with ffmpeg included) are on the [Releases page](https://github.com/djryanj/recording-fixer/releases). How a release is made, tested and signed is in [docs/RELEASING.md](docs/RELEASING.md); what ships inside is listed in [docs/THIRD-PARTY.md](docs/THIRD-PARTY.md).
 
 ## Privacy and logs
 
