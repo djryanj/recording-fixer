@@ -118,6 +118,13 @@ describe('transport', () => {
     expect(mocked.audioPlay).not.toHaveBeenCalled();
   });
 
+  it('play does not claim to be playing when nothing is loaded (e.g. no audio device)', async () => {
+    // Showing Pause until the next poll made the e2e suite see playback that never happened.
+    const a = new AudioStore();
+    await a.play();
+    expect(a.state.playing).toBe(false);
+  });
+
   it('seek clamps to the material and reports the new position at once', async () => {
     const a = new AudioStore();
     a.state = state({ loaded: true, duration_secs: 100 });

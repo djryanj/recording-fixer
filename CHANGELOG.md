@@ -21,7 +21,7 @@ First version, not yet tagged or published.
 - A local log file (errors, panics and what the app did) with Settings buttons to show it or copy it for a bug report. It is never sent anywhere.
 - A private update check: one anonymous request to GitHub's public release list, at most daily, switchable off in Settings; it never downloads or installs anything. See [PRIVACY.md](PRIVACY.md): the app collects no data, ever.
 - Settings dialog, Auto/Dark/Light theme, and an About page with licence and non-affiliation notices.
-- CI for Windows and macOS (including the end-to-end suite against the real app on Windows), plus Dependabot and a `cargo deny` dependency policy.
+- CI for Windows and macOS (including the end-to-end suite against the real app on Windows, driven through msedgedriver), plus Dependabot and a `cargo deny` dependency policy. CI compiles no tools from source: the Tauri CLI is a UI dev dependency (`npm --prefix ui install`, used by the `just` recipes), and ffmpeg is a pinned, cached download.
 
 ### Known limitations
 

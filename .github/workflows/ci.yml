@@ -87,12 +87,14 @@ jobs:
         run: brew install ffmpeg
       - name: Install ffmpeg (Windows)
         if: runner.os == 'Windows'
-        run: choco install ffmpeg -y --no-progress
+        uses: ./.github/actions/ffmpeg-windows
 
-      # ASIO (Windows) needs LLVM and pulls in Steinberg's SDK. macOS builds leave it out.
-      - name: Install LLVM (Windows)
+      # ASIO (Windows) needs LLVM and pulls in Steinberg's SDK. macOS builds leave it out. The Windows
+      # image already ships LLVM (`choco install llvm` was a 2 s no-op), so only check it is there.
+      - name: Check LLVM (Windows)
         if: runner.os == 'Windows'
-        run: choco install llvm -y --no-progress
+        shell: pwsh
+        run: if (-not (Test-Path 'C:\Program Files\LLVM\bin\libclang.dll')) { throw 'libclang not found; the runner image no longer ships LLVM, so install it here (choco install llvm)' }
 
       - name: UI dependencies
         run: npm --prefix ui ci
@@ -123,7 +125,8 @@ jobs:
   e2e:
     name: End-to-end (Windows, real app)
     runs-on: windows-latest
-    needs: [changes, test]
+    # Runs alongside the test jobs rather than after them; "CI result" still needs all of them.
+    needs: changes
     if: needs.changes.outputs.code == 'true'
     timeout-minutes: 60
     steps:
@@ -137,12 +140,11 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: ui/package-lock.json
-      - name: Tools
-        run: |
-          choco install ffmpeg llvm -y --no-progress
-          cargo install tauri-cli --version "^2" --locked
-          cargo install tauri-driver --locked
-          npm --prefix ui ci
+      # No `cargo install`s: compiling tauri-cli and tauri-driver took ~11 minutes per run. The Tauri CLI
+      # is a prebuilt npm dev dependency, and the tests talk to msedgedriver directly.
+      - uses: ./.github/actions/ffmpeg-windows
+      - name: UI dependencies (includes the Tauri CLI)
+        run: npm --prefix ui ci
       - name: Matching Edge WebDriver
         shell: pwsh
         run: |
@@ -154,7 +156,7 @@ jobs:
           Invoke-WebRequest "https://msedgedriver.microsoft.com/$v/edgedriver_win64.zip" -OutFile ui/e2e/.tools/edgedriver.zip
           Expand-Archive ui/e2e/.tools/edgedriver.zip ui/e2e/.tools/edgedriver -Force
       - name: Build the app
-        run: cargo tauri build --debug --no-bundle
+        run: npm --prefix ui exec -- tauri build --debug --no-bundle
         env:
           LIBCLANG_PATH: 'C:\Program Files\LLVM\bin'
       - name: Pre-flight (app and WebView2 start)

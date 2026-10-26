@@ -7,6 +7,8 @@ set windows-shell := ["powershell.exe", "-NoLogo", "-NoProfile", "-Command"]
 # ASIO (Windows) needs LLVM's libclang; macOS builds leave ASIO out.
 export LIBCLANG_PATH := env("LIBCLANG_PATH", if os() == "windows" { "C:\\Program Files\\LLVM\\bin" } else { "" })
 features := if os() == "macos" { "--no-default-features" } else { "" }
+# The Tauri CLI is a UI dev dependency (`just setup`); npm runs it from the repo root, where it finds src-tauri.
+tauri := "npm --prefix ui exec -- tauri"
 
 default:
     @just --list
@@ -17,7 +19,7 @@ setup:
 
 # Run the app with hot reload
 dev:
-    cargo tauri dev {{ if os() == "macos" { "-- --no-default-features" } else { "" } }}
+    {{ tauri }} dev {{ if os() == "macos" { "-- --no-default-features" } else { "" } }}
 
 # Format, lints and type check; must be clean
 check:
@@ -48,15 +50,15 @@ e2e-diagnose:
 
 # Quick debug exe, no installer
 build-debug:
-    cargo tauri build --debug --no-bundle {{ if os() == "macos" { "-- --no-default-features" } else { "" } }}
+    {{ tauri }} build --debug --no-bundle {{ if os() == "macos" { "-- --no-default-features" } else { "" } }}
 
 # Optimised standalone app for this machine, no installer: target/release/recording-fixer(.exe)
 release:
-    cargo tauri build --no-bundle {{ if os() == "macos" { "-- --no-default-features" } else { "" } }}
+    {{ tauri }} build --no-bundle {{ if os() == "macos" { "-- --no-default-features" } else { "" } }}
 
 # Installers (NSIS/MSI on Windows, .dmg on macOS)
 build:
-    cargo tauri build {{ if os() == "macos" { "-- --no-default-features" } else { "" } }}
+    {{ tauri }} build {{ if os() == "macos" { "-- --no-default-features" } else { "" } }}
 
 # Everything CI runs on this machine
 ci: check test e2e

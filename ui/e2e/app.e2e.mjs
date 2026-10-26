@@ -1,10 +1,9 @@
-// End-to-end tests: the real built app, driven through tauri-driver + Edge WebDriver.
+// End-to-end tests: the real built app, driven through Edge WebDriver. msedgedriver starts a WebView2
+// app itself; tauri-driver would only translate the capabilities for it.
 //
 // Prerequisites (see README "Testing"):
-//   cargo install tauri-driver --locked
-//   an msedgedriver matching the installed WebView2 runtime, in tests/e2e/.tools/edgedriver/ (or EDGEDRIVER)
-//   cargo tauri build --debug --no-bundle        (the app under test)
-//   npm --prefix tests/e2e install
+//   an msedgedriver matching the installed WebView2 runtime, in ui/e2e/.tools/edgedriver/ (or EDGEDRIVER)
+//   npm --prefix ui exec -- tauri build --debug --no-bundle        (the app under test)
 //
 // Every test works on synthetic recordings in a temp folder that the app is pointed at with
 // RECORDING_FIXER_FOLDERS, with its own WebView2 profile, so nothing of the user's is touched.
@@ -95,7 +94,7 @@ async function waitForPort(port, ms = 15000) {
     if (await canConnect(port)) return;
     await new Promise((r) => setTimeout(r, 150));
   }
-  throw new Error(`tauri-driver did not start on port ${port}`);
+  throw new Error(`msedgedriver did not start on port ${port}`);
 }
 let work, driverProc, driver;
 const files = {};
@@ -154,7 +153,7 @@ async function rescan() {
 }
 
 before(async () => {
-  assert.ok(existsSync(exe), `build the app first (cargo tauri build --debug --no-bundle): ${exe} not found`);
+  assert.ok(existsSync(exe), `build the app first (just build-debug):${exe} not found`);
   assert.ok(existsSync(edgedriver), `msedgedriver not found at ${edgedriver} (set EDGEDRIVER)`);
 
   work = mkdtempSync(join(tmpdir(), 'srf-e2e-'));
@@ -168,14 +167,14 @@ before(async () => {
   const old = new Date(Date.now() - 3600_000);
   (await import('node:fs')).utimesSync(files.broken, old, old);
 
-  // Keep tauri-driver's output: when the session cannot start (it happened on CI only), this is the
-  // only trace of why.
+  // Keep the driver's output: when the session cannot start (it happened on CI only), this is the
+  // only trace of why. The app inherits this environment through msedgedriver.
   const logDir = join(here, '.tools', 'logs');
   mkdirSync(logDir, { recursive: true });
-  const driverLog = join(logDir, 'tauri-driver.log');
+  const driverLog = join(logDir, 'msedgedriver.log');
   const logFd = openSync(driverLog, 'w');
   const port = await freePort();
-  driverProc = spawn('tauri-driver', ['--port', String(port), '--native-driver', edgedriver], {
+  driverProc = spawn(edgedriver, [`--port=${port}`], {
     stdio: ['ignore', logFd, logFd],
     env: {
       ...process.env,
@@ -189,10 +188,10 @@ before(async () => {
     await waitForPort(port);
     driver = await new Builder()
       .usingServer(`http://127.0.0.1:${port}/`)
-      .withCapabilities({ browserName: 'wry', 'tauri:options': { application: exe } })
+      .withCapabilities({ browserName: 'webview2', 'ms:edgeOptions': { binary: exe, webviewOptions: {} } })
       .build();
   } catch (e) {
-    console.error(`tauri-driver output (${driverLog}):
+    console.error(`msedgedriver output (${driverLog}):
 ${readFileSync(driverLog, 'utf8') || '<empty>'}`);
     throw e;
   }
@@ -473,7 +472,7 @@ describe('the real app', () => {
       return /0:0\d\.\d/.test(t) && (await driver.findElements(By.xpath("//button[@aria-label='Pause']"))).length > 0 || /Cannot play|could not open|no default audio/i.test(t);
     }, 15000, 'playback to start or a clear error to appear');
     const playing = (await driver.findElements(By.xpath("//button[@aria-label='Pause']"))).length > 0;
-    t.diagnostic(playing ? 'AUDIO: playback started on the real output device' : "AUDIO: no playback; the app said: ${(await bodyText()).match(/Cannot play[^\n]*|could not open[^\n]*/i)?.[0]}");
+    t.diagnostic(playing ? 'AUDIO: playback started on the real output device' : `AUDIO: no playback; the app said: ${(await bodyText()).match(/Cannot play[^\n]*|could not open[^\n]*/i)?.[0]}`);
     const alive = await driver.findElement(By.css('main'));
     assert.ok(await alive.isDisplayed(), 'the app is still up');
   });
