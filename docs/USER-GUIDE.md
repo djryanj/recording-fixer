@@ -20,7 +20,7 @@ Contents: [Installing](#installing) · [The first minute](#the-first-minute) · 
 
 Early builds may not be signed with a publisher certificate yet. That makes the system show a warning for any program it has not seen many times; it does not mean the file is damaged. To check you have the real file, compare its SHA-256 with `SHA256SUMS.txt` on the release page:
 
-- Windows: in PowerShell, `Get-FileHash .\Recording-Fixer…-setup.exe`
+- Windows: in PowerShell, `Get-FileHash` on the downloaded file, for example `Get-FileHash "$HOME\Downloads\Recording Fixer for Serato DJ_0.1.0_x64-setup.exe"`
 - macOS: in Terminal, `shasum -a 256 Recording-Fixer….dmg`
 
 Then:
