@@ -51,7 +51,8 @@ If a test fails, ask whether the app or the test is wrong. Both happen.
 ## Commits and pull requests
 
 - Small, focused commits with a message that says why.
-- User-visible changes get a line under "Unreleased" in [CHANGELOG.md](CHANGELOG.md).
+- User-visible changes get a line under "Unreleased" in [CHANGELOG.md](CHANGELOG.md). Dependabot PRs get theirs automatically (a maintainer can re-run it by commenting `/auto-changelog`).
+- Docs-only PRs skip the build jobs; the required check is the single "CI result".
 - One topic per PR. Include how you tested it and, for UI changes, a screenshot.
 - Say which platform you tested on. Do not claim macOS behaviour works unless CI or a Mac confirmed it.
 

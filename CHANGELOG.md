@@ -4,8 +4,6 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ## [Unreleased]
 
-Nothing yet. Add user-visible changes here in the same pull request that makes them.
-
 ## [0.1.0] - Not yet released
 
 First version, not yet tagged or published.

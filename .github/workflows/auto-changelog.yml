@@ -1,0 +1,159 @@
+name: Auto changelog for bots
+
+# Adds a one-line CHANGELOG.md entry to Dependabot PRs when they are opened, and on demand when a
+# maintainer comments `/auto-changelog` on one. Human PRs are changelogged by hand.
+#
+# Why pull_request_target: a Dependabot-triggered `pull_request` run always gets a read-only token
+# whatever `permissions:` says, so it could not push. This workflow therefore runs from the
+# default branch and never executes anything from the PR: the only code is in this file, and the
+# checkout is used solely to edit CHANGELOG.md. Only PRs whose author is a listed bot, from this
+# repository, are touched.
+#
+# Why a PAT/App token: commits pushed with the built-in GITHUB_TOKEN do not start workflows, so CI
+# would never run on the changelog commit and the required "CI result" check would stay pending.
+# Set the secret AUTO_CHANGELOG_TOKEN (fine-grained PAT, this repo only, Contents: read/write) under
+# BOTH Settings > Secrets > Actions and Settings > Secrets > Dependabot.
+#
+# Dependabot stops rebasing a PR once someone else has pushed to it; use `@dependabot recreate`
+# (then `/auto-changelog` again) if you need a fresh branch.
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: auto-changelog-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  update-changelog:
+    name: Update changelog
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Cheap filter first so unrelated comments and human PRs do not start a job at all.
+    if: >-
+      (github.event_name == 'pull_request_target'
+        && github.event.pull_request.user.login == 'dependabot[bot]'
+        && github.event.pull_request.head.repo.full_name == github.repository)
+      || (github.event_name == 'issue_comment'
+        && github.event.issue.pull_request
+        && startsWith(github.event.comment.body, '/auto-changelog'))
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Resolve and authorise
+        id: pr
+        uses: actions/github-script@d746ffe35508b1917358783b479e04febd2b8f71 # v9.0.0
+        with:
+          script: |
+            const bots = new Set(['dependabot[bot]']);
+            const skip = (why) => { core.info(why); core.setOutput('run', 'false'); };
+
+            let number;
+            if (context.eventName === 'issue_comment') {
+              // Whoever typed the command needs write access; anyone who can read the repo can comment.
+              const assoc = context.payload.comment.author_association;
+              if (!['OWNER', 'MEMBER', 'COLLABORATOR'].includes(assoc)) {
+                return skip(`Commenter is ${assoc}, not a maintainer.`);
+              }
+              number = context.payload.issue.number;
+            } else {
+              number = context.payload.pull_request.number;
+            }
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner, repo: context.repo.repo, pull_number: number,
+            });
+            if (!bots.has(pr.user.login)) return skip(`PR author ${pr.user.login} is not a listed bot.`);
+            if (pr.state !== 'open') return skip('PR is not open.');
+            if (pr.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}`) {
+              return skip('PR head is not in this repository.');
+            }
+
+            core.setOutput('run', 'true');
+            core.setOutput('number', String(pr.number));
+            core.setOutput('title', pr.title);
+            core.setOutput('url', pr.html_url);
+            core.setOutput('ref', pr.head.ref);
+
+      - name: Require push token
+        if: steps.pr.outputs.run == 'true'
+        env:
+          TOKEN: ${{ secrets.AUTO_CHANGELOG_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::AUTO_CHANGELOG_TOKEN is not set (needed in both the Actions and Dependabot secret stores). A push with GITHUB_TOKEN would not trigger CI, leaving the required check pending."
+            exit 1
+          fi
+
+      - name: Check out the PR branch
+        if: steps.pr.outputs.run == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.pr.outputs.ref }}
+          token: ${{ secrets.AUTO_CHANGELOG_TOKEN }}
+
+      - name: Add the entry
+        if: steps.pr.outputs.run == 'true'
+        env:
+          PR_TITLE: ${{ steps.pr.outputs.title }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          PR_URL: ${{ steps.pr.outputs.url }}
+        run: |
+          node - <<'JS'
+          const fs = require('fs');
+          const path = 'CHANGELOG.md';
+          if (!fs.existsSync(path)) { console.log('No CHANGELOG.md; nothing to do.'); process.exit(0); }
+
+          const title = process.env.PR_TITLE.replace(/\s+/g, ' ').trim();
+          const n = process.env.PR_NUMBER;
+          const entry = `- ${title} ([#${n}](${process.env.PR_URL}))`;
+
+          const text = fs.readFileSync(path, 'utf8');
+          if (text.includes(`([#${n}](`)) { console.log(`#${n} is already listed.`); process.exit(0); }
+
+          const lines = text.split('\n');
+          const heading = lines.findIndex((l) => /^## \[Unreleased\]\s*$/i.test(l));
+          if (heading === -1) {
+            let first = lines.findIndex((l) => /^## /.test(l));
+            if (first === -1) first = lines.length;
+            lines.splice(first, 0, '## [Unreleased]', '', '### Changed', '', entry, '');
+          } else {
+            let end = lines.findIndex((l, i) => i > heading && /^## /.test(l));
+            if (end === -1) end = lines.length;
+            const changed = lines.findIndex((l, i) => i > heading && i < end && /^### Changed\s*$/.test(l));
+            if (changed !== -1) {
+              if (lines[changed + 1] === '') lines.splice(changed + 2, 0, entry);
+              else lines.splice(changed + 1, 0, '', entry, '');
+            } else {
+              let e = end;
+              while (e > heading + 1 && lines[e - 1].trim() === '') e--;
+              lines.splice(e, end - e, '', '### Changed', '', entry, '');
+            }
+          }
+          fs.writeFileSync(path, lines.join('\n'));
+          console.log('Updated CHANGELOG.md');
+          JS
+
+      - name: Commit and push
+        if: steps.pr.outputs.run == 'true'
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          BRANCH: ${{ steps.pr.outputs.ref }}
+        run: |
+          if git diff --quiet CHANGELOG.md; then
+            echo "No change to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          # No "[skip ci]": CI must run on this commit for the required check to report.
+          git commit -m "docs: add changelog entry for #${PR_NUMBER}"
+          git push origin "HEAD:refs/heads/${BRANCH}"
