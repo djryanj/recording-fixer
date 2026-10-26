@@ -102,6 +102,8 @@ jobs:
         run: npm --prefix ui run check
       - name: UI tests (logic + components)
         run: npm --prefix ui test
+      - name: Release script tests
+        run: node --test "scripts/*.test.mjs"
 
       - name: Rust format
         run: cargo fmt --all --check

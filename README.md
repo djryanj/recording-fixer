@@ -141,6 +141,8 @@ brew install just                     # macOS
 | `just e2e-diagnose` | start the debug exe through msedgedriver with a verbose log (for session failures)         |
 | `just release`      | optimised standalone app for this machine, no installer (`target/release/recording-fixer`) |
 | `just build`        | installers                                                                                 |
+| `just prepare-release X.Y.Z` | start a release: bump the versions on a `release/vX.Y.Z` branch and push it (see CONTRIBUTING) |
+| `just tag-release X.Y.Z`     | after that PR is merged: tag `main` and push the tag                                           |
 | `just ci`           | `check`, `test` and `e2e`: what CI runs                                                    |
 
 The recipes set `LIBCLANG_PATH` for ASIO on Windows and leave ASIO out on macOS, so you don't have to. They are thin wrappers; the raw commands are listed below if you prefer them.
