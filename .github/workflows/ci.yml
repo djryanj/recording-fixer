@@ -146,7 +146,10 @@ jobs:
       - name: Matching Edge WebDriver
         shell: pwsh
         run: |
-          $v = (Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}').pv
+          # The driver must match the runtime the app actually loads: prefer the installed folder, fall back to the registry.
+          $dir = Get-ChildItem 'C:\Program Files (x86)\Microsoft\EdgeWebView\Application' -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d+\.' } | Sort-Object { [version]$_.Name } | Select-Object -Last 1
+          $v = if ($dir) { $dir.Name } else { (Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}').pv }
+          Write-Host "WebView2 runtime $v"
           New-Item -ItemType Directory -Force ui/e2e/.tools | Out-Null
           Invoke-WebRequest "https://msedgedriver.microsoft.com/$v/edgedriver_win64.zip" -OutFile ui/e2e/.tools/edgedriver.zip
           Expand-Archive ui/e2e/.tools/edgedriver.zip ui/e2e/.tools/edgedriver -Force
@@ -154,8 +157,18 @@ jobs:
         run: cargo tauri build --debug --no-bundle
         env:
           LIBCLANG_PATH: 'C:\Program Files\LLVM\bin'
+      - name: Pre-flight (app and WebView2 start)
+        shell: pwsh
+        run: ./ui/e2e/smoke.ps1
       - name: Drive it
         run: npm --prefix ui run e2e
+      - name: Keep driver logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-logs
+          path: ui/e2e/.tools/logs/
+          if-no-files-found: ignore
 
   # The one check the branch ruleset requires. Skipped jobs (docs-only changes) count as passing;
   # a failed or cancelled one does not. Requiring this instead of each job also avoids the
