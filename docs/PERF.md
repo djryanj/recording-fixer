@@ -61,6 +61,20 @@ target\release\examples\export_bench.exe "Serato Recording 5.aif" out.m4a apple 
 
 ffmpeg's own memory is not included in these figures. Audio is streamed; nothing proportional to file size is buffered.
 
+### Loudness maximizer (Serato Recording 1, 3 h, 44.1 kHz stereo 16-bit)
+
+```
+cargo run --release -p dynamics --example maximize -- "Serato Recording 1.aif" out.aif --lufs -14 --ceiling -1
+```
+
+| Step | Time | Speed |
+|---|---|---|
+| Measure (K-weighted loudness, true peak) | 17 s | about 650x realtime |
+| Rehearse (whole chain, output discarded), once or twice | about 17 s each | |
+| Process and write | 39 s | about 275x |
+
+Peak working set 15.6 MB, independent of length. Time grows linearly with the total length of the set. See [MAXIMIZER.md](MAXIMIZER.md).
+
 ## To do
 
 - `criterion` benchmarks for diagnose, repair copy and peak build.

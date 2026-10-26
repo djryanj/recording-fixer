@@ -27,6 +27,7 @@ tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 aiff-core.workspace = true
+dynamics.workspace = true
 edit-core.workspace = true
 export.workspace = true
 library = { path = "../crates/library" }

@@ -4,12 +4,16 @@ mod logging;
 mod update;
 
 use aiff_core::inuse::{is_in_use, RECENT_WINDOW};
-use edit_core::Clip;
+use dynamics::leveler::Leveling;
+use dynamics::maximizer::{self, Maximizer, Mode};
+use dynamics::pcm::PcmFormat;
+use edit_core::{Clip, FadeReader};
 use export::{AacMode, Codec, ExportSpec, Metadata, Mp3Mode, Mp3Options, APPLE_ENCODER};
 use library::{FileEntry, FolderInfo};
 use peaks::{cache, Peaks};
 use playback::{DeviceInfo, DeviceSelection, LoadInfo, OpenedInfo, Playback, PlaybackState};
 use serde::{Deserialize, Serialize};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -369,6 +373,59 @@ impl From<MetadataDto> for Metadata {
     }
 }
 
+/// Loudness maximizer settings from the export window; absent means the audio is not processed.
+#[derive(Deserialize)]
+struct LoudnessDto {
+    /// "lufs" (reach a loudness, leveling as chosen) or "peak" (normalize the highest peak).
+    mode: String,
+    lufs: f64,
+    ceiling_db: f64,
+    /// "off", "gentle", "medium" or "strong".
+    leveling: String,
+}
+
+impl LoudnessDto {
+    fn params(&self) -> maximizer::Params {
+        maximizer::Params {
+            mode: if self.mode == "peak" {
+                Mode::Peak
+            } else {
+                Mode::Loudness(self.lufs.clamp(-40.0, -3.0))
+            },
+            ceiling_db: self.ceiling_db.clamp(-20.0, 0.0),
+            leveling: match self.leveling.as_str() {
+                "gentle" => Leveling::gentle(),
+                "strong" => Leveling::strong(),
+                "off" => Leveling::OFF,
+                _ => Leveling::medium(),
+            },
+            precise: true,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct ExportOutcome {
+    path: String,
+    /// One plain sentence about what the loudness processing did, when it ran.
+    summary: Option<String>,
+}
+
+fn describe_report(r: &maximizer::Report) -> String {
+    let limiter = if r.limiter.max_reduction_db < 0.1 {
+        "the limiter did not need to act".to_string()
+    } else {
+        format!(
+            "the limiter averaged {:.1} dB and reached {:.1} dB at most",
+            r.limiter.mean_reduction_db, r.limiter.max_reduction_db
+        )
+    };
+    format!(
+        "Loudness {:.1} LUFS (was {:.1}), peak {:.1} dBTP; {limiter}",
+        r.output.lufs, r.input.lufs, r.output.true_peak_db
+    )
+}
+
 #[derive(Deserialize)]
 struct ExportJob {
     clips: Vec<ClipDto>,
@@ -384,6 +441,8 @@ struct ExportJob {
     fade_in_secs: f64,
     #[serde(default)]
     fade_out_secs: f64,
+    #[serde(default)]
+    loudness: Option<LoudnessDto>,
 }
 
 /// Keep a user-typed file name from escaping the output folder or being invalid on Windows.
@@ -441,7 +500,11 @@ fn codec_for(target: Target) -> Result<Codec, String> {
     })
 }
 
-fn run_export(app: &AppHandle, cancel: &AtomicBool, job: ExportJob) -> Result<String, String> {
+fn run_export(
+    app: &AppHandle,
+    cancel: &AtomicBool,
+    job: ExportJob,
+) -> Result<ExportOutcome, String> {
     let plan = edit_core::plan(&to_clips(&job.clips)).map_err(|e| e.to_string())?;
     let stem = sanitize_stem(&job.file_stem);
     let ext = match &job.target {
@@ -450,48 +513,118 @@ fn run_export(app: &AppHandle, cancel: &AtomicBool, job: ExportJob) -> Result<St
         Target::Aac { .. } => "m4a",
     };
     let out = library::unique_path(Path::new(&job.output_dir), &stem, "", ext);
+    let fade =
+        edit_core::Fade::from_secs(job.fade_in_secs, job.fade_out_secs, plan.format.sample_rate);
+
+    // Check the encoder before spending time on anything else.
+    let encode = if matches!(job.target, Target::Aiff) {
+        None
+    } else {
+        let codec = codec_for(job.target)?;
+        let ffmpeg = find_ffmpeg(app, job.ffmpeg_path.as_deref())
+            .ok_or_else(|| export::Error::FfmpegNotFound.to_string())?;
+        let needed = match &codec {
+            Codec::Mp3(_) => Some("libmp3lame"),
+            Codec::Aac { encoder, .. } if encoder == APPLE_ENCODER => None, // checked by the encoder itself
+            Codec::Aac { encoder, .. } => Some(encoder.as_str()),
+        };
+        if let Some(name) = needed {
+            let encoders = export::probe_encoders(&ffmpeg).map_err(|e| e.to_string())?;
+            if !encoders.has(name) {
+                return Err(export::Error::MissingEncoder(name.into()).to_string());
+            }
+        }
+        Some((codec, ffmpeg))
+    };
+
+    // Loudness: measure first (and rehearse once), so the real pass knows what to do.
+    let fmt = PcmFormat {
+        bits: plan.format.bits,
+        channels: plan.format.channels,
+        rate: plan.format.sample_rate,
+    };
+    let prepared = match &job.loudness {
+        None => None,
+        Some(l) => {
+            let mut measuring = Throttle::new(app, format!("Measuring loudness of {stem}"));
+            let mut checking =
+                Throttle::new(app, format!("Checking the loudness result for {stem}"));
+            let prepared = maximizer::prepare(
+                || Ok(plan.reader()),
+                fmt,
+                plan.total_frames,
+                &l.params(),
+                &mut |phase, done, total| {
+                    match phase {
+                        maximizer::Phase::Measuring => measuring.emit(done, total),
+                        maximizer::Phase::Rehearsing => checking.emit(done, total),
+                    }
+                    !cancel.load(Ordering::Relaxed)
+                },
+            )
+            .map_err(|e| e.to_string())?;
+            log::info!(
+                "loudness plan for {stem}: input {:.1} LUFS, static gain {:+.1} dB",
+                prepared.input.lufs,
+                prepared.curve.static_db
+            );
+            Some(prepared)
+        }
+    };
+
     let mut throttle = Throttle::new(app, format!("Exporting {stem}.{ext}"));
     let mut progress = |done: u64, total: u64| {
         throttle.emit(done, total);
         !cancel.load(Ordering::Relaxed)
     };
 
-    let fade =
-        edit_core::Fade::from_secs(job.fade_in_secs, job.fade_out_secs, plan.format.sample_rate);
-    if matches!(job.target, Target::Aiff) {
-        plan.write_aiff_faded(&out, fade, &mut progress)
-            .map_err(|e| e.to_string())?;
-        return Ok(out.display().to_string());
-    }
-    let codec = codec_for(job.target)?;
-    let ffmpeg = find_ffmpeg(app, job.ffmpeg_path.as_deref())
-        .ok_or_else(|| export::Error::FfmpegNotFound.to_string())?;
-    let needed = match &codec {
-        Codec::Mp3(_) => Some("libmp3lame"),
-        Codec::Aac { encoder, .. } if encoder == APPLE_ENCODER => None, // checked by the encoder itself
-        Codec::Aac { encoder, .. } => Some(encoder.as_str()),
+    // read -> [loudness] -> fades -> encode. Fades come after the leveller so it cannot lift a fade-out.
+    let maximizer = prepared.as_ref().map(|p| Maximizer::new(plan.reader(), p));
+    let report = maximizer.as_ref().map(Maximizer::report_handle);
+    let inner: Box<dyn Read> = match maximizer {
+        Some(m) => Box::new(m),
+        None => Box::new(plan.reader()),
     };
-    if let Some(name) = needed {
-        let encoders = export::probe_encoders(&ffmpeg).map_err(|e| e.to_string())?;
-        if !encoders.has(name) {
-            return Err(export::Error::MissingEncoder(name.into()).to_string());
+    let mut source = FadeReader::new(
+        inner,
+        fade,
+        plan.format.bits,
+        plan.format.channels,
+        plan.total_frames,
+    );
+
+    match encode {
+        None => plan
+            .write_aiff_from(&out, &mut source, &mut progress)
+            .map_err(|e| e.to_string())?,
+        Some((codec, ffmpeg)) => {
+            let spec = ExportSpec {
+                format: plan.format.clone(),
+                codec,
+                output: out.clone(),
+                metadata: job.metadata.into(),
+            };
+            export::run(
+                &ffmpeg,
+                &spec,
+                &mut source,
+                plan.total_bytes(),
+                &mut progress,
+            )
+            .map_err(|e| e.to_string())?;
         }
     }
-    let spec = ExportSpec {
-        format: plan.format.clone(),
-        codec,
-        output: out.clone(),
-        metadata: job.metadata.into(),
-    };
-    export::run(
-        &ffmpeg,
-        &spec,
-        &mut plan.reader_faded(fade),
-        plan.total_bytes(),
-        &mut progress,
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(out.display().to_string())
+
+    let summary = report
+        .and_then(|r| r.lock().ok().and_then(|mut r| r.take()))
+        .map(|r| describe_report(&r));
+    if let Some(s) = &summary {
+        log::info!("{stem}: {s}");
+    }
+    Ok(ExportOutcome {
+        path: out.display().to_string(),
+        summary,
+    })
 }
 
 #[tauri::command]
@@ -499,7 +632,7 @@ async fn export_audio(
     app: AppHandle,
     jobs: State<'_, Jobs>,
     job: ExportJob,
-) -> Result<String, String> {
+) -> Result<ExportOutcome, String> {
     let cancel = jobs.cancel.clone();
     cancel.store(false, Ordering::Relaxed);
     log::info!(
@@ -519,7 +652,7 @@ async fn export_audio(
         .await
         .map_err(|e| e.to_string())?;
     if let Ok(out) = &result {
-        log::info!("export finished: {}", file_label(out));
+        log::info!("export finished: {}", file_label(&out.path));
     }
     logged("export", result)
 }
@@ -952,5 +1085,39 @@ mod tests {
         assert_eq!((job.fade_in_secs, job.fade_out_secs), (2.5, 4.0));
         let f = edit_core::Fade::from_secs(job.fade_in_secs, job.fade_out_secs, 44100.0);
         assert_eq!((f.in_frames, f.out_frames), (110_250, 176_400));
+    }
+
+    fn loudness(json: &str) -> LoudnessDto {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn loudness_settings_map_to_the_maximizer_and_stay_in_range() {
+        let p =
+            loudness(r#"{"mode":"lufs","lufs":-14,"ceiling_db":-1,"leveling":"strong"}"#).params();
+        assert_eq!(p.mode, Mode::Loudness(-14.0));
+        assert_eq!(p.ceiling_db, -1.0);
+        assert_eq!(p.leveling, Leveling::strong());
+        assert!(p.precise);
+        // Nonsense from the UI is pulled into range, and unknown names fall back to the default.
+        let p = loudness(r#"{"mode":"lufs","lufs":12,"ceiling_db":3,"leveling":"wild"}"#).params();
+        assert_eq!(p.mode, Mode::Loudness(-3.0));
+        assert_eq!(p.ceiling_db, 0.0);
+        assert_eq!(p.leveling, Leveling::medium());
+        assert_eq!(
+            loudness(r#"{"mode":"peak","lufs":-14,"ceiling_db":-0.1,"leveling":"off"}"#)
+                .params()
+                .mode,
+            Mode::Peak
+        );
+    }
+
+    #[test]
+    fn export_jobs_without_loudness_still_deserialize() {
+        let job: ExportJob = serde_json::from_str(
+            r#"{"clips":[],"target":{"kind":"aiff"},"output_dir":"x","file_stem":"y","ffmpeg_path":null}"#,
+        )
+        .unwrap();
+        assert!(job.loudness.is_none());
     }
 }

@@ -238,10 +238,11 @@
             metadata: job.metadata,
             fade_in_secs: job.fadeInSecs,
             fade_out_secs: job.fadeOutSecs,
+            loudness: req.loudness,
             ffmpeg_path: userFfmpeg,
           }),
         );
-        if (out) say('ok', `Exported ${out.split(/[\\/]/).pop()}`, out);
+        if (out) say('ok', `Exported ${out.path.split(/[\\/]/).pop()}${out.summary ? `. ${out.summary}` : ''}`, out.path);
       } catch (e) {
         say('error', String(e));
         if (String(e) === 'cancelled') break;

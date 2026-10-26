@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  import type { Clip, Metadata, Target } from './api';
+  import type { Clip, LoudnessJob, Metadata, Target } from './api';
 
   export interface ExportJobSpec {
     clips: Clip[];
@@ -13,6 +13,7 @@
 
   export interface ExportRequest {
     target: Target;
+    loudness: LoudnessJob | null;
     outputDir: string;
     jobs: ExportJobSpec[];
   }
@@ -24,7 +25,7 @@
   import { onDestroy, untrack } from 'svelte';
   import { api, emptyMetadata, type FileEntry, type PlanInfo, type ToolStatus } from './api';
   import { audio } from './audio.svelte';
-  import { buildTarget, clampFade, defaultFormat, qualityLabel, sanitizeFormat, type FormatState } from './exportOptions';
+  import { buildLoudness, buildTarget, clampFade, defaultFormat, qualityLabel, sanitizeFormat, sanitizeLoudness, type FormatState, type LoudnessState } from './exportOptions';
   import { loadSavedExport, patchSavedExport } from './exportSettings';
   import FormatPanel from './FormatPanel.svelte';
   import { formatDuration, formatPrecise, parseTime } from './format';
@@ -76,6 +77,8 @@
   let fadeIn = $state<number | null>(saved.fadeIn ?? 0);
   // svelte-ignore state_referenced_locally
   let fadeOut = $state<number | null>(saved.fadeOut ?? 0);
+  // svelte-ignore state_referenced_locally
+  let loudness = $state<LoudnessState>(sanitizeLoudness(saved.loudness));
   const fadeInSecs = $derived(clampFade(fadeIn));
   const fadeOutSecs = $derived(clampFade(fadeOut));
   let plan = $state<PlanInfo | null>(null);
@@ -297,9 +300,9 @@
   }
 
   function start() {
-    patchSavedExport({ format, nameTemplate, tags, outputDir, fadeIn: fadeInSecs, fadeOut: fadeOutSecs });
+    patchSavedExport({ format, nameTemplate, tags, outputDir, fadeIn: fadeInSecs, fadeOut: fadeOutSecs, loudness: $state.snapshot(loudness) });
     void audio.pause();
-    onstart({ target: buildTarget(format), outputDir, jobs });
+    onstart({ target: buildTarget(format), loudness: buildLoudness(loudness), outputDir, jobs });
   }
 </script>
 
@@ -409,7 +412,7 @@
       </div>
       <div class="tabpanel">
         {#if tab === 'format'}
-          <FormatPanel bind:format bind:fadeIn bind:fadeOut {tool} durationSecs={total} aiffBytes={plan?.bytes ?? null} {onlocate} />
+          <FormatPanel bind:format bind:fadeIn bind:fadeOut bind:loudness {tool} durationSecs={total} aiffBytes={plan?.bytes ?? null} {onlocate} />
         {:else}
           <TagsPanel bind:nameTemplate bind:tags bind:outputDir {sample} {tagsEnabled} separate={mode === 'separate'} {ext} />
         {/if}

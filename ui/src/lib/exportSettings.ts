@@ -1,5 +1,5 @@
 import type { Metadata } from './api';
-import type { FormatState } from './exportOptions';
+import type { FormatState, LoudnessState } from './exportOptions';
 
 /** What the export editor and the Settings window both remember between sessions. */
 export interface SavedExport {
@@ -9,6 +9,7 @@ export interface SavedExport {
   outputDir?: string;
   fadeIn?: number;
   fadeOut?: number;
+  loudness?: LoudnessState;
 }
 
 export const SETTINGS_KEY = 'exportSettings.v1';

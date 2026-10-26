@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/aiff-core", "crates/edit-core", "crates/export", "crates/library", "crates/peaks", "crates/playback", "src-tauri"]
+members = ["crates/aiff-core", "crates/dynamics", "crates/edit-core", "crates/export", "crates/library", "crates/peaks", "crates/playback", "src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
@@ -14,6 +14,7 @@ tempfile = "3"
 aiff-core = { path = "crates/aiff-core" }
 edit-core = { path = "crates/edit-core" }
 export = { path = "crates/export" }
+dynamics = { path = "crates/dynamics" }
 
 [profile.release]
 lto = "thin"

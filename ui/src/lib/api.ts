@@ -84,6 +84,21 @@ export interface RepairResult {
   error: string | null;
 }
 
+/** Loudness maximizer settings for one export; null leaves the audio untouched. */
+export interface LoudnessJob {
+  /** "lufs": reach a loudness, evening out as chosen. "peak": raise the whole thing until its highest peak meets the limit. */
+  mode: 'lufs' | 'peak';
+  lufs: number;
+  ceiling_db: number;
+  leveling: 'off' | 'gentle' | 'medium' | 'strong';
+}
+
+export interface ExportOutcome {
+  path: string;
+  /** One sentence on what the loudness processing did, when it ran. */
+  summary: string | null;
+}
+
 export interface ExportJob {
   clips: Clip[];
   target: Target;
@@ -95,6 +110,7 @@ export interface ExportJob {
   /** Fade in over the start and out over the end of the result, in seconds (0 = none). */
   fade_in_secs: number;
   fade_out_secs: number;
+  loudness: LoudnessJob | null;
 }
 
 export interface Progress {
@@ -179,7 +195,7 @@ export const api = {
   repair: (paths: string[], inPlace: boolean) => invoke<RepairResult[]>('repair', { paths, inPlace }),
   toolStatus: (userPath: string | null) => invoke<ToolStatus>('tool_status', { userPath }),
   planInfo: (clips: Clip[]) => invoke<PlanInfo>('plan_info', { clips }),
-  exportAudio: (job: ExportJob) => invoke<string>('export_audio', { job }),
+  exportAudio: (job: ExportJob) => invoke<ExportOutcome>('export_audio', { job }),
   ensurePeaks: (path: string) => invoke<{ frames: number }>('ensure_peaks', { path }),
   /** `width` columns of [min, max] signed bytes for frames [start, end). */
   getPeaks: async (path: string, start: number, end: number, width: number) =>

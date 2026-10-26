@@ -641,3 +641,68 @@ describe('updates and troubleshooting', () => {
     expect(sec).toHaveTextContent('Copied');
   });
 });
+
+describe('loudness maximizer', () => {
+  async function openEditor(u: ReturnType<typeof user>) {
+    await u.click(within(rowFor('Serato Recording 2.aif')).getByRole('checkbox'));
+    await u.click(screen.getByRole('button', { name: 'Edit & export…' }));
+    return screen.findByRole('dialog', { name: 'Editor' });
+  }
+  const sentJob = () => (backend.of('export_audio')[0] as { job: Record<string, unknown> }).job;
+
+  it('leaves the audio alone unless asked', async () => {
+    const u = user();
+    await mount();
+    const editor = await openEditor(u);
+    const group = within(editor).getByRole('group', { name: 'Loudness' });
+    expect(within(group).getByRole('radio', { name: 'Leave as recorded' })).toBeChecked();
+    expect(within(group).queryByLabelText('Target loudness')).toBeNull();
+    await u.click(within(editor).getByRole('button', { name: 'Export' }));
+    await waitFor(() => expect(backend.of('export_audio')).toHaveLength(1));
+    expect(sentJob().loudness).toBeNull();
+  });
+
+  it('matches a loudness with the chosen evening out and limit, and says what it did', async () => {
+    const u = user();
+    await mount();
+    const editor = await openEditor(u);
+    const group = within(editor).getByRole('group', { name: 'Loudness' });
+    await u.click(within(group).getByRole('radio', { name: 'Match a loudness' }));
+    await u.click(within(group).getByRole('button', { name: 'Quieter −16' }));
+    await u.selectOptions(within(group).getByLabelText('Evening out'), 'strong');
+    const limit = within(group).getByLabelText('Peak limit');
+    await u.clear(limit);
+    await u.type(limit, '-1.5');
+    await u.click(within(editor).getByRole('button', { name: 'Export' }));
+    await waitFor(() => expect(backend.of('export_audio')).toHaveLength(1));
+    expect(sentJob().loudness).toEqual({ mode: 'lufs', lufs: -16, ceiling_db: -1.5, leveling: 'strong' });
+    expect(await screen.findByText(/Exported Serato Recording 2.out. Loudness -14.0 LUFS/)).toBeInTheDocument();
+  });
+
+  it('peak mode asks only for the limit and sends no evening out', async () => {
+    const u = user();
+    await mount();
+    const editor = await openEditor(u);
+    const group = within(editor).getByRole('group', { name: 'Loudness' });
+    await u.click(within(group).getByRole('radio', { name: 'Raise to a peak limit' }));
+    expect(within(group).queryByLabelText('Evening out')).toBeNull();
+    const limit = within(group).getByLabelText('Peak limit');
+    await u.clear(limit);
+    await u.type(limit, '-0.1');
+    await u.click(within(editor).getByRole('button', { name: 'Export' }));
+    await waitFor(() => expect(backend.of('export_audio')).toHaveLength(1));
+    expect(sentJob().loudness).toMatchObject({ mode: 'peak', ceiling_db: -0.1, leveling: 'off' });
+  });
+
+  it('is remembered between exports and shared with Settings', async () => {
+    const u = user();
+    await mount();
+    await u.click(screen.getByRole('button', { name: /Settings/ }));
+    const d = await screen.findByRole('dialog', { name: 'Settings' });
+    await u.click(within(within(d).getByRole('group', { name: 'Loudness' })).getByRole('radio', { name: 'Match a loudness' }));
+    expect(JSON.parse(localStorage.getItem('exportSettings.v1')!).loudness).toMatchObject({ mode: 'lufs', lufs: -14 });
+    await u.click(screen.getByRole('button', { name: 'Done' }));
+    const editor = await openEditor(u);
+    expect(within(within(editor).getByRole('group', { name: 'Loudness' })).getByRole('radio', { name: 'Match a loudness' })).toBeChecked();
+  });
+});

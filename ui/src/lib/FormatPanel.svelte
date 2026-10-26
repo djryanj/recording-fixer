@@ -8,8 +8,11 @@
     estimateKbps,
     MP3_ABR,
     MP3_CBR,
+    LEVELING_CHOICES,
+    LUFS_PRESETS,
     MP3_VBR,
     type FormatState,
+    type LoudnessState,
   } from './exportOptions';
 
   interface Props {
@@ -20,9 +23,10 @@
     /** Fade lengths in seconds; `null` while the field is empty. */
     fadeIn: number | null;
     fadeOut: number | null;
+    loudness: LoudnessState;
     onlocate: () => void;
   }
-  let { format = $bindable(), tool, durationSecs, aiffBytes, fadeIn = $bindable(), fadeOut = $bindable(), onlocate }: Props = $props();
+  let { format = $bindable(), tool, durationSecs, aiffBytes, fadeIn = $bindable(), fadeOut = $bindable(), loudness = $bindable(), onlocate }: Props = $props();
 
   const ffmpegOk = $derived(!!tool?.ffmpeg_path);
   const mp3Ok = $derived(ffmpegOk && !!tool?.mp3);
@@ -126,6 +130,40 @@
     <span class="hint">Applied to the start and end of each exported file, in every format.</span>
   </div>
 
+  <div class="loud" role="group" aria-label="Loudness">
+    <span class="label">Loudness</span>
+    <div class="modes" role="radiogroup" aria-label="Loudness mode">
+      <label><input type="radio" bind:group={loudness.mode} value="off" /> Leave as recorded</label>
+      <label><input type="radio" bind:group={loudness.mode} value="lufs" /> Match a loudness</label>
+      <label><input type="radio" bind:group={loudness.mode} value="peak" /> Raise to a peak limit</label>
+    </div>
+    {#if loudness.mode === 'lufs'}
+      <div class="grid">
+        <label for="lufs">Target loudness</label>
+        <div class="inline">
+          <input id="lufs" class="mono num" type="number" min="-40" max="-3" step="0.5" bind:value={loudness.lufs} /> <span class="muted">LUFS</span>
+          {#each LUFS_PRESETS as p}<button class="ghost preset" onclick={() => (loudness.lufs = p.lufs)}>{p.label}</button>{/each}
+        </div>
+        <label for="leveling">Evening out</label>
+        <select id="leveling" bind:value={loudness.leveling}>
+          {#each LEVELING_CHOICES as c}<option value={c.value}>{c.label}</option>{/each}
+        </select>
+        <label for="ceiling">Peak limit</label>
+        <div class="inline"><input id="ceiling" class="mono num" type="number" min="-20" max="0" step="0.1" bind:value={loudness.ceiling} /> <span class="muted">dBTP</span></div>
+      </div>
+      <p class="hint">
+        Brings the whole set to this loudness. Stretches much louder than their surroundings (two tracks beatmixed) are turned down, and a track that was left too quiet is turned up,
+        while breakdowns stay quiet. A limiter keeps peaks under the limit. For MP3 and AAC use −1 or lower. This changes the audio, so it is no longer an exact copy of the recording.
+      </p>
+    {:else if loudness.mode === 'peak'}
+      <div class="grid">
+        <label for="ceiling">Peak limit</label>
+        <div class="inline"><input id="ceiling" class="mono num" type="number" min="-20" max="0" step="0.1" bind:value={loudness.ceiling} /> <span class="muted">dBTP</span></div>
+      </div>
+      <p class="hint">Makes the whole recording louder or quieter by one steady amount so its highest peak just reaches the limit. Nothing else changes.</p>
+    {/if}
+  </div>
+
   {#if estimate != null}
     <p class="muted est">Estimated size: about {formatSize(estimate)}</p>
   {/if}
@@ -172,6 +210,23 @@
   }
   .fades input {
     width: 74px;
+  }
+  .loud {
+    display: grid;
+    gap: 8px;
+    padding-top: 10px;
+    border-top: 1px solid var(--line);
+  }
+  .modes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 18px;
+  }
+  .num {
+    width: 84px;
+  }
+  .preset {
+    font-size: 12px;
   }
   .hint,
   .est {

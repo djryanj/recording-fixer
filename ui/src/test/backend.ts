@@ -116,7 +116,10 @@ export function installBackend(invoke: Mock, cfg: BackendConfig = {}): Backend {
       case 'plan_info':
         return { total_frames: 1, duration_secs: 4000, bytes: 1_000_000, format: '44100 Hz, 16-bit, 2 ch', fits_aiff: true };
       case 'export_audio':
-        return `${args.job.output_dir}/${args.job.file_stem}.out`;
+        return {
+          path: `${args.job.output_dir}/${args.job.file_stem}.out`,
+          summary: args.job.loudness ? 'Loudness -14.0 LUFS (was -19.6), peak -1.0 dBTP; the limiter did not need to act' : null,
+        };
       case 'ensure_peaks':
         return { frames: 1 };
       case 'get_peaks': {

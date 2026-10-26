@@ -1,0 +1,368 @@
+//! Loudness measurement after ITU-R BS.1770 / EBU R128: K-weighted energy in 100 ms steps, from
+//! which momentary (400 ms), short-term (3 s) and gated integrated loudness follow.
+//!
+//! The analysis is one streaming pass that keeps only a few numbers per 100 ms, so a set of any
+//! length costs a few megabytes.
+
+use crate::biquad::Biquad;
+use crate::truepeak::TruePeak;
+
+/// LUFS offset of the BS.1770 formula.
+const OFFSET: f64 = -0.691;
+const ABSOLUTE_GATE_LUFS: f64 = -70.0;
+/// Crossover between "bass" and "everything else", for the optional band statistics.
+pub const BASS_HZ: f64 = 150.0;
+
+pub fn lufs(energy: f64) -> f64 {
+    if energy > 0.0 {
+        OFFSET + 10.0 * energy.log10()
+    } else {
+        f64::NEG_INFINITY
+    }
+}
+
+pub fn energy(lufs: f64) -> f64 {
+    10f64.powf((lufs - OFFSET) / 10.0)
+}
+
+/// Per-100 ms measurements of a whole programme.
+#[derive(Debug, Clone)]
+pub struct Profile {
+    pub rate: f64,
+    pub channels: usize,
+    /// Frames per step (rate / 10).
+    pub hop_frames: usize,
+    pub frames: u64,
+    /// K-weighted mean square, summed over channels, per step.
+    pub k_ms: Vec<f64>,
+    /// Mean square of the part below `BASS_HZ` (unweighted, summed over channels), if measured.
+    pub low_ms: Vec<f64>,
+    /// Unweighted mean square of the whole signal (same scale as `low_ms`), if measured.
+    pub full_ms: Vec<f64>,
+    /// Highest true peak (linear) in each step.
+    pub peak: Vec<f32>,
+    /// Running sums of `k_ms`, for fast window averages.
+    prefix: Vec<f64>,
+}
+
+impl Profile {
+    pub fn hops(&self) -> usize {
+        self.k_ms.len()
+    }
+
+    pub fn hop_secs(&self) -> f64 {
+        self.hop_frames as f64 / self.rate
+    }
+
+    pub fn duration_secs(&self) -> f64 {
+        self.frames as f64 / self.rate
+    }
+
+    /// Mean energy over steps `[from, to)`, clamped to what exists.
+    pub fn mean_energy(&self, from: isize, to: isize) -> f64 {
+        let n = self.hops() as isize;
+        let (a, b) = (from.clamp(0, n), to.clamp(0, n));
+        if b <= a {
+            return 0.0;
+        }
+        (self.prefix[b as usize] - self.prefix[a as usize]) / (b - a) as f64
+    }
+
+    /// Loudness of the 3 s window centred on step `i` (shorter at the ends).
+    pub fn short_term(&self, i: usize) -> f64 {
+        let i = i as isize;
+        lufs(self.mean_energy(i - 14, i + 16))
+    }
+
+    /// Gated integrated loudness, or -inf if the programme is silent.
+    pub fn integrated(&self) -> f64 {
+        let blocks = self.blocks();
+        let abs_gate = energy(ABSOLUTE_GATE_LUFS);
+        let above: Vec<f64> = blocks.iter().copied().filter(|&e| e > abs_gate).collect();
+        if above.is_empty() {
+            return f64::NEG_INFINITY;
+        }
+        let mean = above.iter().sum::<f64>() / above.len() as f64;
+        let rel_gate = mean * 0.1; // 10 LU below
+        let kept: Vec<f64> = above.into_iter().filter(|&e| e > rel_gate).collect();
+        lufs(kept.iter().sum::<f64>() / kept.len().max(1) as f64)
+    }
+
+    /// 400 ms block energies with 75 % overlap (one per step).
+    fn blocks(&self) -> Vec<f64> {
+        let n = self.hops();
+        // The last, possibly short, step is left out: a block must be a full 400 ms.
+        let full = if (self.frames as usize).is_multiple_of(self.hop_frames) {
+            n
+        } else {
+            n.saturating_sub(1)
+        };
+        (0..full.saturating_sub(3))
+            .map(|i| self.mean_energy(i as isize, i as isize + 4))
+            .collect()
+    }
+
+    /// Loudness range (EBU Tech 3342): spread of the short-term loudness, ignoring quiet parts.
+    pub fn loudness_range(&self) -> f64 {
+        let st: Vec<f64> = (0..self.hops()).map(|i| self.short_term(i)).collect();
+        let gate = energy(ABSOLUTE_GATE_LUFS);
+        let above: Vec<f64> = st.into_iter().filter(|&l| energy(l) > gate).collect();
+        if above.len() < 2 {
+            return 0.0;
+        }
+        let mean = above.iter().map(|&l| energy(l)).sum::<f64>() / above.len() as f64;
+        let rel = lufs(mean) - 20.0;
+        let mut kept: Vec<f64> = above.into_iter().filter(|&l| l > rel).collect();
+        if kept.len() < 2 {
+            return 0.0;
+        }
+        kept.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let at = |p: f64| kept[((kept.len() - 1) as f64 * p).round() as usize];
+        at(0.95) - at(0.10)
+    }
+
+    /// Highest true peak in the programme, linear.
+    pub fn peak_max(&self) -> f32 {
+        self.peak.iter().copied().fold(0.0, f32::max)
+    }
+}
+
+/// Streaming analyser: feed it interleaved f32 frames in any chunking.
+pub struct Analyzer {
+    rate: f64,
+    channels: usize,
+    hop_frames: usize,
+    shelf: Vec<Biquad>,
+    highpass: Vec<Biquad>,
+    lowpass: Option<Vec<[Biquad; 2]>>,
+    truepeak: TruePeak,
+    in_hop: usize,
+    acc_k: f64,
+    acc_low: f64,
+    acc_full: f64,
+    hop_peak: f32,
+    /// Highest true peak so far, to decide when the interpolation filter is worth running.
+    peak_so_far: f32,
+    frames: u64,
+    k_ms: Vec<f64>,
+    low_ms: Vec<f64>,
+    full_ms: Vec<f64>,
+    peak: Vec<f32>,
+    scratch: Vec<f32>,
+}
+
+impl Analyzer {
+    /// `bands`: also measure the energy below `BASS_HZ` (a little extra work per frame).
+    pub fn new(rate: f64, channels: usize, bands: bool) -> Analyzer {
+        let hop_frames = ((rate / 10.0).round() as usize).max(1);
+        Analyzer {
+            rate,
+            channels,
+            hop_frames,
+            shelf: vec![Biquad::k_shelf(rate); channels],
+            highpass: vec![Biquad::k_highpass(rate); channels],
+            lowpass: bands.then(|| vec![[Biquad::lowpass(rate, BASS_HZ); 2]; channels]),
+            truepeak: TruePeak::new(channels),
+            in_hop: 0,
+            acc_k: 0.0,
+            acc_low: 0.0,
+            acc_full: 0.0,
+            hop_peak: 0.0,
+            peak_so_far: 0.0,
+            frames: 0,
+            k_ms: Vec::new(),
+            low_ms: Vec::new(),
+            full_ms: Vec::new(),
+            peak: Vec::new(),
+            scratch: Vec::new(),
+        }
+    }
+
+    fn close_hop(&mut self) {
+        let n = self.in_hop.max(1) as f64;
+        self.k_ms.push(self.acc_k / n);
+        if self.lowpass.is_some() {
+            self.low_ms.push(self.acc_low / n);
+            self.full_ms.push(self.acc_full / n);
+        }
+        self.peak.push(self.hop_peak);
+        self.in_hop = 0;
+        self.acc_k = 0.0;
+        self.acc_low = 0.0;
+        self.acc_full = 0.0;
+        self.hop_peak = 0.0;
+    }
+
+    pub fn push(&mut self, interleaved: &[f32]) {
+        // Inter-sample peaks only matter once a window could beat the loudest peak so far, so the
+        // interpolation filter is skipped for everything quieter than that.
+        let ch = self.channels;
+        for frame in interleaved.chunks_exact(ch) {
+            for (c, &x) in frame.iter().enumerate() {
+                let w = self.highpass[c].process(self.shelf[c].process(f64::from(x)));
+                self.acc_k += w * w;
+                if let Some(lp) = &mut self.lowpass {
+                    let first = lp[c][0].process(f64::from(x));
+                    let l = lp[c][1].process(first);
+                    self.acc_low += l * l;
+                    self.acc_full += f64::from(x) * f64::from(x);
+                }
+            }
+            if let Some(p) = self.truepeak.push(frame, self.peak_so_far) {
+                self.hop_peak = self.hop_peak.max(p);
+                self.peak_so_far = self.peak_so_far.max(p);
+            }
+            self.in_hop += 1;
+            self.frames += 1;
+            if self.in_hop == self.hop_frames {
+                self.close_hop();
+            }
+        }
+    }
+
+    /// Feed integer-valued samples scaled to +-1 (convenience for tests and tools).
+    pub fn push_scaled(&mut self, samples: impl IntoIterator<Item = f32>) {
+        self.scratch.clear();
+        self.scratch.extend(samples);
+        let buf = std::mem::take(&mut self.scratch);
+        self.push(&buf);
+        self.scratch = buf;
+    }
+
+    pub fn finish(mut self) -> Profile {
+        // The true-peak detector lags a few frames behind; flush it so the last peaks count.
+        let zeros = vec![0.0f32; self.channels];
+        for _ in 0..crate::truepeak::DELAY {
+            if let Some(p) = self.truepeak.push(&zeros, self.peak_so_far) {
+                self.hop_peak = self.hop_peak.max(p);
+            }
+        }
+        if self.in_hop > 0 {
+            self.close_hop();
+        }
+        let mut prefix = Vec::with_capacity(self.k_ms.len() + 1);
+        let mut sum = 0.0;
+        prefix.push(0.0);
+        for &e in &self.k_ms {
+            sum += e;
+            prefix.push(sum);
+        }
+        Profile {
+            rate: self.rate,
+            channels: self.channels,
+            hop_frames: self.hop_frames,
+            frames: self.frames,
+            k_ms: self.k_ms,
+            low_ms: self.low_ms,
+            full_ms: self.full_ms,
+            peak: self.peak,
+            prefix,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::f64::consts::PI;
+
+    /// Stereo (same in both channels) 997 Hz sine at `db` dBFS peak, for `secs`.
+    fn sine(rate: f64, db: f64, secs: f64) -> Vec<f32> {
+        let a = 10f64.powf(db / 20.0);
+        (0..(rate * secs) as usize)
+            .flat_map(|i| {
+                let v = (a * (2.0 * PI * 997.0 * i as f64 / rate).sin()) as f32;
+                [v, v]
+            })
+            .collect()
+    }
+
+    fn analyse(rate: f64, samples: &[f32]) -> Profile {
+        let mut a = Analyzer::new(rate, 2, false);
+        // Awkward chunking must not matter.
+        for chunk in samples.chunks(2 * 1237) {
+            a.push(chunk);
+        }
+        a.finish()
+    }
+
+    #[test]
+    fn a_997_hz_sine_at_minus_23_dbfs_reads_minus_23_lufs() {
+        for rate in [44_100.0, 48_000.0, 22_050.0] {
+            let p = analyse(rate, &sine(rate, -23.0, 20.0));
+            assert!(
+                (p.integrated() + 23.0).abs() < 0.1,
+                "{rate}: {}",
+                p.integrated()
+            );
+            assert!((p.short_term(50) + 23.0).abs() < 0.1);
+            assert!(p.loudness_range() < 0.2);
+            let peak_db = 20.0 * f64::from(p.peak_max()).log10();
+            assert!((peak_db + 23.0).abs() < 0.2, "{peak_db}");
+        }
+    }
+
+    #[test]
+    fn level_changes_move_the_reading_one_for_one() {
+        let rate = 44_100.0;
+        let a = analyse(rate, &sine(rate, -30.0, 10.0)).integrated();
+        let b = analyse(rate, &sine(rate, -20.0, 10.0)).integrated();
+        assert!((b - a - 10.0).abs() < 0.05);
+    }
+
+    #[test]
+    fn silence_does_not_pull_the_integrated_value_down() {
+        let rate = 44_100.0;
+        let mut s = sine(rate, -20.0, 10.0);
+        let plain = analyse(rate, &s).integrated();
+        s.extend(vec![0.0; (rate * 2.0 * 30.0) as usize]); // 30 s of nothing
+                                                           // Blocks that straddle the edge keep a little energy, as the standard defines.
+        assert!((analyse(rate, &s).integrated() - plain).abs() < 0.15);
+    }
+
+    #[test]
+    fn quiet_passages_are_gated_out_of_the_integrated_value() {
+        // 10 s at -20 then 10 s at -40: the -40 part is more than 10 LU below and ignored.
+        let rate = 44_100.0;
+        let mut s = sine(rate, -20.0, 10.0);
+        s.extend(sine(rate, -40.0, 10.0));
+        assert!((analyse(rate, &s).integrated() + 20.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn loudness_range_sees_a_step() {
+        let rate = 44_100.0;
+        let mut s = sine(rate, -26.0, 20.0);
+        s.extend(sine(rate, -16.0, 20.0));
+        let lra = analyse(rate, &s).loudness_range();
+        assert!((lra - 10.0).abs() < 1.0, "{lra}");
+    }
+
+    #[test]
+    fn the_last_partial_step_is_kept_and_counted() {
+        let rate = 44_100.0;
+        let p = analyse(rate, &sine(rate, -20.0, 1.55));
+        assert_eq!(p.hops(), 16);
+        assert_eq!(p.frames, (rate * 1.55) as u64);
+    }
+
+    #[test]
+    fn bass_energy_is_reported_separately() {
+        let rate = 44_100.0;
+        let tone = |f: f64| -> Vec<f32> {
+            (0..(rate * 5.0) as usize)
+                .flat_map(|i| {
+                    let v = (0.3 * (2.0 * PI * f * i as f64 / rate).sin()) as f32;
+                    [v, v]
+                })
+                .collect()
+        };
+        let mut a = Analyzer::new(rate, 2, true);
+        a.push(&tone(60.0));
+        let low = a.finish();
+        let mut a = Analyzer::new(rate, 2, true);
+        a.push(&tone(3000.0));
+        let high = a.finish();
+        assert!(low.low_ms[10] > 50.0 * high.low_ms[10]);
+    }
+}
