@@ -2,9 +2,8 @@
 // session shows what msedgedriver launched, with which arguments, and what it was waiting for.
 //   node ui/e2e/diagnose.mjs        (APP_EXE and EDGEDRIVER override the defaults)
 //
-// It tries the plain launch first, then (only if that fails) extra WebView2 browser arguments, to find
-// out whether the environment needs one. CI runs elevated, and Chromium behaves differently then.
-// Logs land in ui/e2e/.tools/logs/msedgedriver-<variant>.log; the tail of each failure is printed.
+// Note: msedgedriver's `args` capability goes to the *app's* command line, not to WebView2, so it cannot
+// be used to pass browser flags. Log lands in ui/e2e/.tools/logs/msedgedriver-plain.log.
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
@@ -19,11 +18,7 @@ const edgedriver = process.env.EDGEDRIVER ?? join(here, '.tools', 'edgedriver', 
 const logDir = join(here, '.tools', 'logs');
 mkdirSync(logDir, { recursive: true });
 
-const variants = [
-  { name: 'plain', args: [] },
-  { name: 'no-sandbox', args: ['--no-sandbox'] },
-  { name: 'no-sandbox-no-gpu', args: ['--no-sandbox', '--disable-gpu'] },
-];
+const variants = [{ name: 'plain', args: [] }];
 
 const freePort = () =>
   new Promise((res) => {
