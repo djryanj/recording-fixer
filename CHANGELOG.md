@@ -18,8 +18,10 @@ First version, not yet tagged or published.
 - Audio preview through WASAPI, ASIO (Windows build option) and CoreAudio, with device and output-pair selection.
 - Export to AIFF, MP3 (CBR, VBR, ABR) and AAC through ffmpeg, with ID3 tags, filename and tag templates, and fades applied identically for every output.
 - Apple AAC encoding on Windows through the user's own `CoreAudioToolbox.dll`, with encoder delay compensated. Encoder choice is detected at startup and can be overridden.
+- A local log file (errors, panics and what the app did) with Settings buttons to show it or copy it for a bug report. It is never sent anywhere.
+- A private update check: one anonymous request to GitHub's public release list, at most daily, switchable off in Settings; it never downloads or installs anything. See [PRIVACY.md](PRIVACY.md): the app collects no data, ever.
 - Settings dialog, Auto/Dark/Light theme, and an About page with licence and non-affiliation notices.
-- CI for Windows and macOS, plus Dependabot and a `cargo deny` dependency policy.
+- CI for Windows and macOS (including the end-to-end suite against the real app on Windows), plus Dependabot and a `cargo deny` dependency policy.
 
 ### Known limitations
 

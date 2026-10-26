@@ -180,6 +180,7 @@ before(async () => {
     env: {
       ...process.env,
       RECORDING_FIXER_FOLDERS: work,
+      RECORDING_FIXER_NO_UPDATE_CHECK: '1', // tests never touch the network
       WEBVIEW2_USER_DATA_FOLDER: join(work, '.webview'),
     },
   });

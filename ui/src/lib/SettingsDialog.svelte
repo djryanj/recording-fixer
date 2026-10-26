@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import type { ToolStatus } from './api';
-  import { appVersion, ISSUES_URL, openLink, REPO_URL } from './about';
+  import { appVersion, ISSUES_URL, openLink, PRIVACY_URL, REPO_URL } from './about';
+  import { api, type UpdateInfo } from './api';
+  import { checkForUpdate, setUpdateChecks, updateChecksEnabled } from './updates';
   import { clampFade, defaultFormat, encoderLabel, sanitizeFormat, type FormatState } from './exportOptions';
   import { loadSavedExport, patchSavedExport } from './exportSettings';
   import FormatPanel from './FormatPanel.svelte';
@@ -23,6 +25,40 @@
 
   let appVer = $state('');
   onMount(() => void appVersion().then((v) => (appVer = v)));
+
+  let autoCheck = $state(updateChecksEnabled());
+  let checking = $state(false);
+  let checked = $state<UpdateInfo | null>(null);
+  let checkError = $state('');
+  async function checkNow() {
+    checking = true;
+    checkError = '';
+    checked = null;
+    try {
+      checked = await checkForUpdate();
+    } catch (e) {
+      checkError = String(e);
+    } finally {
+      checking = false;
+    }
+  }
+
+  let logNote = $state('');
+  async function showLog() {
+    try {
+      await api.reveal(await api.logLocation());
+    } catch (e) {
+      logNote = `Could not open the log folder: ${e}`;
+    }
+  }
+  async function copyLog() {
+    try {
+      await navigator.clipboard.writeText(await api.readLog());
+      logNote = 'Copied. Paste it into your bug report.';
+    } catch (e) {
+      logNote = `Could not copy the log: ${e}. Use "Show log file" and attach the file instead.`;
+    }
+  }
 
   // The same remembered choices the export editor starts from, so what is set here is what a new export begins with.
   const saved = untrack(() => loadSavedExport());
@@ -111,6 +147,40 @@
       <div class="row">
         <button onclick={onaudio}>Audio output device and channels…</button>
         <span class="muted">Where recordings play: WASAPI, ASIO or CoreAudio, and which output pair.</span>
+      </div>
+    </section>
+
+    <section aria-label="Updates and privacy">
+      <h3 class="label">Updates and privacy</h3>
+      <p class="why">
+        This app collects nothing and sends nothing about you or your files. The one thing it can do online is ask GitHub's public
+        release list whether a newer version exists (a plain web request, no identifier, at most once a day). It never installs anything.
+      </p>
+      <label class="check"><input type="checkbox" bind:checked={autoCheck} onchange={() => setUpdateChecks(autoCheck)} /> Look for a newer version when the app starts</label>
+      <div class="row">
+        <button onclick={checkNow} disabled={checking}>{checking ? 'Checking…' : 'Check now'}</button>
+        {#if checked?.newer && checked.url}
+          <span role="status"><i class="led busy"></i> Version <b>{checked.latest}</b> is available.</span>
+          <button onclick={() => openLink(checked!.url!)}>View the release</button>
+        {:else if checked}
+          <span role="status"><i class="led ok"></i> {checked.latest ? 'You have the latest version.' : 'No release has been published yet.'}</span>
+        {:else if checkError}
+          <span role="status" class="muted"><i class="led bad"></i> Could not check: {checkError}</span>
+        {/if}
+        <button class="ghost" onclick={() => openLink(PRIVACY_URL)}>Privacy policy</button>
+      </div>
+    </section>
+
+    <section aria-label="Troubleshooting">
+      <h3 class="label">Troubleshooting</h3>
+      <p class="why">
+        The app keeps a log of what it did and any errors, in a file on this computer. It is never sent anywhere: if you report a problem,
+        you choose whether to include it. It can contain the names of the recordings you worked with, so glance at it first.
+      </p>
+      <div class="row">
+        <button onclick={showLog}>Show log file</button>
+        <button onclick={copyLog}>Copy log to clipboard</button>
+        {#if logNote}<span class="muted" role="status">{logNote}</span>{/if}
       </div>
     </section>
 
@@ -204,6 +274,12 @@
     margin-left: 8px;
     font-size: 11.5px;
     color: var(--amber);
+  }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
   }
   .row {
     display: flex;

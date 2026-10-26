@@ -212,6 +212,10 @@ docs/               ANALYSIS (design), FEATURES (scope), PERF (measured baseline
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. [CLAUDE.md](CLAUDE.md) has the engineering rules (TDD for the core, streaming I/O and memory budgets, never modify user files by default).
 
+## Privacy and logs
+
+The app collects no data, ever; see [PRIVACY.md](PRIVACY.md). Its only network use is an optional once-a-day check of GitHub's public release list for a newer version (switch it off in Settings). When something goes wrong, **Settings > Troubleshooting** shows the local log file or copies it, so you can attach it to a bug report; it is never sent anywhere.
+
 ## License
 
 Free software, **GPL-3.0-or-later**: see [LICENSE](LICENSE). You may use, study, change and share it; anything you distribute based on it must stay under the same license with its source available. It is not for sale and never will be.

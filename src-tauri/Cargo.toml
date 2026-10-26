@@ -33,3 +33,7 @@ library = { path = "../crates/library" }
 peaks = { path = "../crates/peaks" }
 playback = { path = "../crates/playback" }
 tauri-plugin-opener = "2.7.2"
+log = { version = "0.4", features = ["std"] }
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -6,6 +6,7 @@ import {
   type FileEntry,
   type PlaybackState,
   type ToolStatus,
+  type UpdateInfo,
 } from '../lib/api';
 
 export function entry(over: Partial<FileEntry> & { name: string }): FileEntry {
@@ -66,6 +67,8 @@ export interface BackendConfig {
   detailChannels?: number;
   /** Default folders (by path) that should be reported as not existing. */
   missingFolders?: string[];
+  /** What check_for_update answers (default: up to date). */
+  update?: UpdateInfo;
   /** Make named commands fail with this message. */
   failures?: Record<string, string>;
 }
@@ -136,6 +139,14 @@ export function installBackend(invoke: Mock, cfg: BackendConfig = {}): Backend {
         }
         return out.buffer;
       }
+      case 'check_for_update':
+        return cfg.update ?? { current: '0.1.0', latest: '0.1.0', url: 'https://github.com/djryanj/recording-fixer/releases/tag/v0.1.0', newer: false };
+      case 'log_location':
+        return 'C:/logs/recording-fixer.log';
+      case 'read_log':
+        return '2026-01-01T00:00:00Z INFO  starting\n';
+      case 'log_ui':
+        return null;
       case 'plugin:app|version':
         return '0.1.0';
       case 'plugin:opener|open_url':

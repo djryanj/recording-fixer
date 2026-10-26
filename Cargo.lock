@@ -3093,6 +3093,7 @@ dependencies = [
  "edit-core",
  "export",
  "library",
+ "log",
  "peaks",
  "playback",
  "serde",
@@ -3101,6 +3102,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
+ "tempfile",
 ]
 
 [[package]]

@@ -56,6 +56,11 @@ If a test fails, ask whether the app or the test is wrong. Both happen.
 - One topic per PR. Include how you tested it and, for UI changes, a screenshot.
 - Say which platform you tested on. Do not claim macOS behaviour works unless CI or a Mac confirmed it.
 
+## Logging and privacy
+
+- The app writes a local log (`src-tauri/src/logging.rs`) through the `log` crate: use `log::info!`/`warn!`/`error!` in `src-tauri`, and log **file names, not full paths**. Failures returned to the UI from a command should go through `logged(...)`.
+- The app collects no data and that is a promise ([PRIVACY.md](PRIVACY.md)). Do not add telemetry, analytics or crash upload. Any new network access needs an opt-out, must send no identifiers, and must be described in `PRIVACY.md` in the same pull request. End-to-end tests set `RECORDING_FIXER_NO_UPDATE_CHECK` so they never touch the network.
+
 ## Security
 
 Please do not file security problems as public issues. Use GitHub's private vulnerability reporting on the repository's Security tab.

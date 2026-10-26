@@ -37,6 +37,14 @@ export interface ToolStatus {
   apple: string | null;
 }
 
+export interface UpdateInfo {
+  current: string;
+  /** Newest published release; null if the project has not published one yet. */
+  latest: string | null;
+  url: string | null;
+  newer: boolean;
+}
+
 export interface Clip {
   path: string;
   start_frame: number;
@@ -178,6 +186,10 @@ export const api = {
     new Int8Array(await invoke<ArrayBuffer>('get_peaks', { path, start, end, width })),
   /** Exact 16-bit [min, max] per frame for frames [start, end) (at most 262,144 frames). */
   getSamples: async (path: string, start: number, end: number) => new Int16Array(await invoke<ArrayBuffer>('get_samples', { path, start, end })),
+  checkForUpdate: () => invoke<UpdateInfo>('check_for_update'),
+  logLocation: () => invoke<string>('log_location'),
+  readLog: () => invoke<string>('read_log'),
+  logUi: (level: 'error' | 'warn' | 'info', message: string) => invoke<void>('log_ui', { level, message }),
   cancelJob: () => invoke<void>('cancel_job'),
   reveal: (path: string) => invoke<void>('reveal_in_folder', { path }),
   onProgress: (fn: (p: Progress) => void) => listen<Progress>('job-progress', (e) => fn(e.payload)),

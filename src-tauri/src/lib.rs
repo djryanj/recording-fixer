@@ -1,5 +1,8 @@
 //! Thin Tauri command layer. All real work lives in the crates under `crates/`.
 
+mod logging;
+mod update;
+
 use aiff_core::inuse::{is_in_use, RECENT_WINDOW};
 use edit_core::Clip;
 use export::{AacMode, Codec, ExportSpec, Metadata, Mp3Mode, Mp3Options, APPLE_ENCODER};
@@ -12,6 +15,24 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindowBuilder};
+
+/// Where the log file lives, for the Settings window to show or read.
+struct LogDir(PathBuf);
+
+/// Log a failed command with what it was doing, then pass the error on to the UI unchanged.
+fn logged<T>(what: &str, result: Result<T, String>) -> Result<T, String> {
+    if let Err(e) = &result {
+        log::error!("{what} failed: {e}");
+    }
+    result
+}
+
+/// Only the file name: logs get pasted into bug reports, and folders can name people.
+fn file_label(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .map_or_else(|| path.to_string(), |n| n.to_string_lossy().into_owned())
+}
 
 /// Shared cancel flag for whichever job is running (one at a time).
 #[derive(Default)]
@@ -134,22 +155,29 @@ async fn repair(
 ) -> Result<Vec<RepairResult>, String> {
     let cancel = jobs.cancel.clone();
     cancel.store(false, Ordering::Relaxed);
+    log::info!("repair: {} file(s), in place: {in_place}", paths.len());
     tauri::async_runtime::spawn_blocking(move || {
         paths
             .into_iter()
             .map(|path| match repair_one(&app, &cancel, &path, in_place) {
-                Ok(output) => RepairResult {
-                    path,
-                    ok: true,
-                    output: Some(output),
-                    error: None,
-                },
-                Err(error) => RepairResult {
-                    path,
-                    ok: false,
-                    output: None,
-                    error: Some(error),
-                },
+                Ok(output) => {
+                    log::info!("repaired {} -> {}", file_label(&path), file_label(&output));
+                    RepairResult {
+                        path,
+                        ok: true,
+                        output: Some(output),
+                        error: None,
+                    }
+                }
+                Err(error) => {
+                    log::error!("repair of {} failed: {error}", file_label(&path));
+                    RepairResult {
+                        path,
+                        ok: false,
+                        output: None,
+                        error: Some(error),
+                    }
+                }
             })
             .collect()
     })
@@ -204,6 +232,7 @@ fn describe_apple(a: &export::apple::AppleAac) -> String {
 async fn tool_status(app: AppHandle, user_path: Option<String>) -> Result<ToolStatus, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let Some(path) = find_ffmpeg(&app, user_path.as_deref()) else {
+            log::warn!("ffmpeg was not found");
             let apple =
                 export::apple::detect(&export::Encoders::default()).map(|a| describe_apple(&a));
             return ToolStatus {
@@ -215,7 +244,10 @@ async fn tool_status(app: AppHandle, user_path: Option<String>) -> Result<ToolSt
                 apple,
             };
         };
-        let encoders = export::probe_encoders(&path).unwrap_or_default();
+        let encoders = export::probe_encoders(&path).unwrap_or_else(|e| {
+            log::warn!("could not list ffmpeg encoders: {e}");
+            Default::default()
+        });
         let apple = export::apple::detect(&encoders);
         let mut aac: Vec<String> = encoders
             .aac_available()
@@ -226,6 +258,11 @@ async fn tool_status(app: AppHandle, user_path: Option<String>) -> Result<ToolSt
         if export::apple::usable_windows_dll().is_some() {
             aac.insert(0, APPLE_ENCODER.to_string());
         }
+        log::info!(
+            "ffmpeg: {}; AAC encoders: {}",
+            path.display(),
+            aac.join(", ")
+        );
         ToolStatus {
             ffmpeg_version: export::version(&path),
             ffmpeg_path: Some(path.display().to_string()),
@@ -267,7 +304,7 @@ struct PlanInfo {
 
 #[tauri::command]
 async fn plan_info(clips: Vec<ClipDto>) -> Result<PlanInfo, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let plan = edit_core::plan(&to_clips(&clips)).map_err(|e| e.to_string())?;
         Ok(PlanInfo {
             total_frames: plan.total_frames,
@@ -281,7 +318,8 @@ async fn plan_info(clips: Vec<ClipDto>) -> Result<PlanInfo, String> {
         })
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    logged("planning the edit", result)
 }
 
 #[derive(Deserialize)]
@@ -464,9 +502,26 @@ async fn export_audio(
 ) -> Result<String, String> {
     let cancel = jobs.cancel.clone();
     cancel.store(false, Ordering::Relaxed);
-    tauri::async_runtime::spawn_blocking(move || run_export(&app, &cancel, job))
+    log::info!(
+        "export: {} clip(s) as {}",
+        job.clips.len(),
+        match &job.target {
+            Target::Aiff => "AIFF".to_string(),
+            Target::Mp3 { mode, value, .. } => format!("MP3 {mode} {value}"),
+            Target::Aac {
+                encoder,
+                mode,
+                value,
+            } => format!("AAC {encoder} {mode} {value}"),
+        }
+    );
+    let result = tauri::async_runtime::spawn_blocking(move || run_export(&app, &cancel, job))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    if let Ok(out) = &result {
+        log::info!("export finished: {}", file_label(out));
+    }
+    logged("export", result)
 }
 
 /// Peaks for `path`: from memory, else the disk cache, else built now (one pass over the audio).
@@ -526,11 +581,12 @@ async fn ensure_peaks(
     path: String,
 ) -> Result<PeakInfo, String> {
     let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let result = tauri::async_runtime::spawn_blocking(move || {
         peaks_for(&app, &store, &path).map(|p| PeakInfo { frames: p.frames })
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    logged("building the waveform", result)
 }
 
 /// `width` columns of interleaved `[min, max]` signed bytes for frames `[start, end)`, as raw binary.
@@ -545,7 +601,7 @@ async fn get_peaks(
 ) -> Result<tauri::ipc::Response, String> {
     let store = store.inner().clone();
     let width = width.min(8192);
-    tauri::async_runtime::spawn_blocking(move || {
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let peaks = peaks_for(&app, &store, &path)?;
         let bytes: Vec<u8> = peaks
             .columns(start, end, width)
@@ -555,20 +611,22 @@ async fn get_peaks(
         Ok::<_, String>(tauri::ipc::Response::new(bytes))
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    logged("reading waveform peaks", result)
 }
 
 /// Exact 16-bit `[min, max]` per frame for frames `[start, end)` (little-endian i16 pairs), for
 /// zooming in to individual samples. At most `peaks::MAX_SAMPLE_FRAMES` (262,144) frames per call.
 #[tauri::command]
 async fn get_samples(path: String, start: u64, end: u64) -> Result<tauri::ipc::Response, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let v = peaks::read_samples(Path::new(&path), start, end).map_err(|e| e.to_string())?;
         let bytes: Vec<u8> = v.into_iter().flat_map(i16::to_le_bytes).collect();
         Ok::<_, String>(tauri::ipc::Response::new(bytes))
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    logged("reading samples", result)
 }
 
 #[tauri::command]
@@ -605,11 +663,20 @@ async fn audio_set_device(
     selection: DeviceSelection,
 ) -> Result<OpenedInfo, String> {
     let pb = pb.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let result = tauri::async_runtime::spawn_blocking(move || {
         pb.set_device(selection).map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    if let Ok(opened) = &result {
+        log::info!(
+            "audio output: {} ({}), {} Hz",
+            opened.name,
+            opened.host,
+            opened.rate
+        );
+    }
+    logged("opening the audio device", result)
 }
 
 #[tauri::command]
@@ -619,12 +686,13 @@ async fn audio_load(
     start_secs: f64,
 ) -> Result<LoadInfo, String> {
     let pb = pb.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let result = tauri::async_runtime::spawn_blocking(move || {
         pb.load(to_clips(&clips), start_secs)
             .map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    logged("loading audio for playback", result)
 }
 
 #[tauri::command]
@@ -669,6 +737,43 @@ fn reveal_in_folder(path: String) -> Result<(), String> {
     result.map(|_| ()).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn log_location(dir: State<'_, LogDir>) -> String {
+    logging::log_file(&dir.0).display().to_string()
+}
+
+/// The end of the log, for the user to copy into a bug report.
+#[tauri::command]
+fn read_log(dir: State<'_, LogDir>) -> String {
+    logging::read_tail(&dir.0, 256 * 1024)
+}
+
+/// Lets the UI record its own errors (uncaught exceptions) in the same file.
+#[tauri::command]
+fn log_ui(level: String, message: String) {
+    let message: String = message.chars().take(4000).collect();
+    match level.as_str() {
+        "warn" => log::warn!(target: "recording_fixer::ui", "{message}"),
+        "info" => log::info!(target: "recording_fixer::ui", "{message}"),
+        _ => log::error!(target: "recording_fixer::ui", "{message}"),
+    }
+}
+
+/// Asks GitHub's public release list whether a newer version exists. See update.rs and PRIVACY.md.
+#[tauri::command]
+async fn check_for_update(app: AppHandle) -> Result<update::UpdateInfo, String> {
+    let current = app.package_info().version.to_string();
+    let result = tauri::async_runtime::spawn_blocking(move || update::check(&current))
+        .await
+        .map_err(|e| e.to_string())?;
+    match &result {
+        Ok(info) if info.newer => log::info!("update check: {:?} is available", info.latest),
+        Ok(_) => log::info!("update check: up to date"),
+        Err(e) => log::warn!("update check failed: {e}"),
+    }
+    result
+}
+
 /// The window is described in tauri.conf.json (`create: false`) and built here so WebDriver can work.
 /// tauri-driver asks for the browser's debug port through WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS, but
 /// wry always sets its own argument list on the WebView2 environment, and on the CI runner the
@@ -705,6 +810,15 @@ pub fn run() {
         .manage(Arc::new(PeaksStore::default()))
         .manage(Arc::new(playback::start_system()))
         .setup(|app| {
+            // Logging first, so anything that goes wrong while starting is recorded.
+            let log_dir = app
+                .path()
+                .app_log_dir()
+                .unwrap_or_else(|_| std::env::temp_dir().join("recording-fixer-logs"));
+            if let Err(e) = logging::init(&log_dir) {
+                eprintln!("could not open the log file in {}: {e}", log_dir.display());
+            }
+            app.manage(LogDir(log_dir));
             create_main_window(app.handle())?;
             Ok(())
         })
@@ -728,7 +842,11 @@ pub fn run() {
             audio_seek,
             audio_volume,
             audio_state,
-            reveal_in_folder
+            reveal_in_folder,
+            log_location,
+            read_log,
+            log_ui,
+            check_for_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running Recording Fixer for Serato DJ");

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
   import { open } from '@tauri-apps/plugin-dialog';
-  import { api, type FileEntry, type FolderInfo, type Progress, type ToolStatus } from './lib/api';
+  import { api, type FileEntry, type FolderInfo, type Progress, type ToolStatus, type UpdateInfo } from './lib/api';
   import { audio } from './lib/audio.svelte';
   import AudioSettings from './lib/AudioSettings.svelte';
   import Editor, { type ExportRequest } from './lib/Editor.svelte';
@@ -19,6 +19,7 @@
   import { applyTheme, loadTheme, nextTheme, themeLabel, type Theme } from './lib/theme';
   import { appVersion, ISSUES_URL, openLink } from './lib/about';
   import SettingsDialog from './lib/SettingsDialog.svelte';
+  import { checkForUpdate, checkIsDue } from './lib/updates';
   import Transport from './lib/Transport.svelte';
 
   interface FolderRow extends FolderInfo {
@@ -62,6 +63,11 @@
   let showTools = $state(false);
   let appVer = $state('');
   onMount(() => void appVersion().then((v) => (appVer = v)));
+  let update = $state<UpdateInfo | null>(null);
+  // A quiet once-a-day look at GitHub's public release list; failures (offline, no curl) are not worth a message.
+  onMount(() => {
+    if (checkIsDue()) void checkForUpdate().then((u) => (update = u)).catch(() => {});
+  });
   let nextId = 0;
   let theme = $state<Theme>(loadTheme());
   function cycleTheme() {
@@ -448,6 +454,11 @@
       <span class="muted idle">{entries.length} recording{entries.length === 1 ? '' : 's'}{counts.broken ? ` · ${counts.broken} need repair` : ''}</span>
     {/if}
     <span class="grow"></span>
+    {#if update?.newer && update.url}
+      <button class="ghost ver" onclick={() => openLink(update!.url!)} title="Opens the release page in your browser">
+        <i class="led busy"></i> Update available: v{update.latest}
+      </button>
+    {/if}
     <button class="ghost ver" onclick={() => (showTools = true)} title="About, and how to report a problem">{appVer ? `v${appVer}` : 'About'}</button>
     <button class="ghost ver" onclick={() => openLink(ISSUES_URL)} title="Opens GitHub in your browser">Report an issue</button>
   </footer>
