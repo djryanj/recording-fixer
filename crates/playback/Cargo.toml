@@ -15,6 +15,7 @@ asio = ["cpal/asio"]
 
 [dependencies]
 aiff-core.workspace = true
+dynamics.workspace = true
 edit-core.workspace = true
 cpal = "0.18"
 rubato = "5"

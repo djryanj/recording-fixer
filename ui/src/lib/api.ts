@@ -150,6 +150,23 @@ export interface LoadInfo {
   rate: number;
   channels: number;
   bits: number;
+  /** Present when the audio is being played through the loudness processing. */
+  loudness?: PreviewInfo | null;
+}
+
+/** What the loudness plan for the preview came to. */
+export interface PreviewInfo {
+  input_lufs: number;
+  static_gain_db: number;
+  gain_min_db: number;
+  gain_max_db: number;
+}
+
+export interface PeaksProgress {
+  path: string;
+  /** Frames analysed so far / in all. */
+  done: number;
+  total: number;
 }
 
 export interface PlaybackState {
@@ -184,7 +201,7 @@ export const api = {
   audioDevices: () => invoke<AudioDevice[]>('audio_devices'),
   audioDeviceDetails: (id: string) => invoke<AudioDevice | null>('audio_device_details', { id }),
   audioSetDevice: (selection: DeviceSelection) => invoke<OpenedDevice>('audio_set_device', { selection }),
-  audioLoad: (clips: Clip[], startSecs: number) => invoke<LoadInfo>('audio_load', { clips, startSecs }),
+  audioLoad: (clips: Clip[], startSecs: number, loudness: LoudnessJob | null = null) => invoke<LoadInfo>('audio_load', { clips, startSecs, loudness }),
   audioPlay: () => invoke<void>('audio_play'),
   audioPause: () => invoke<void>('audio_pause'),
   audioSeek: (secs: number) => invoke<void>('audio_seek', { secs }),
@@ -208,5 +225,6 @@ export const api = {
   logUi: (level: 'error' | 'warn' | 'info', message: string) => invoke<void>('log_ui', { level, message }),
   cancelJob: () => invoke<void>('cancel_job'),
   reveal: (path: string) => invoke<void>('reveal_in_folder', { path }),
+  onPeaksProgress: (fn: (p: PeaksProgress) => void) => listen<PeaksProgress>('peaks-progress', (e) => fn(e.payload)),
   onProgress: (fn: (p: Progress) => void) => listen<Progress>('job-progress', (e) => fn(e.payload)),
 };

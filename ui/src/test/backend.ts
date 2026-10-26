@@ -165,7 +165,14 @@ export function installBackend(invoke: Mock, cfg: BackendConfig = {}): Backend {
         P().loaded = true;
         P().duration_secs = backend.durationOverride ?? clips.length * 100;
         P().position_secs = args.startSecs as number;
-        return { duration_secs: P().duration_secs, total_frames: 1, rate: 44100, channels: 2, bits: 16 };
+        return {
+          duration_secs: P().duration_secs,
+          total_frames: 1,
+          rate: 44100,
+          channels: 2,
+          bits: 16,
+          loudness: args.loudness ? { input_lufs: -19.6, static_gain_db: 5.6, gain_min_db: 3.4, gain_max_db: 9.0 } : null,
+        };
       }
       case 'audio_play':
         P().playing = true;

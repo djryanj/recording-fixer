@@ -5,13 +5,16 @@ mod update;
 
 use aiff_core::inuse::{is_in_use, RECENT_WINDOW};
 use dynamics::leveler::Leveling;
+use dynamics::loudness::Profile;
 use dynamics::maximizer::{self, Maximizer, Mode};
 use dynamics::pcm::PcmFormat;
 use edit_core::{Clip, FadeReader};
 use export::{AacMode, Codec, ExportSpec, Metadata, Mp3Mode, Mp3Options, APPLE_ENCODER};
 use library::{FileEntry, FolderInfo};
 use peaks::{cache, Peaks};
-use playback::{DeviceInfo, DeviceSelection, LoadInfo, OpenedInfo, Playback, PlaybackState};
+use playback::{
+    DeviceInfo, DeviceSelection, LoadInfo, OpenedInfo, Playback, PlaybackState, Processing,
+};
 use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -44,16 +47,55 @@ struct Jobs {
     cancel: Arc<AtomicBool>,
 }
 
+/// The finest-level buckets a waveform build has made so far.
+type PartialBuckets = Arc<Mutex<Vec<i8>>>;
+
 /// Waveform peaks: a few recently used files in memory, everything else on disk.
 #[derive(Default)]
 struct PeaksStore {
     recent: Mutex<Vec<(String, Arc<Peaks>)>>,
     /// Serialises builds so several clips of one file never analyse it twice.
     build: Mutex<()>,
+    /// Finest-level buckets of the builds in progress, so the waveform can be drawn as it grows.
+    partial: Mutex<Vec<(String, PartialBuckets)>>,
 }
+
+impl PeaksStore {
+    /// What the build of this file has produced so far, and how many frames that covers.
+    fn partial_snapshot(&self, mem_key: &str) -> Option<(Vec<i8>, u64)> {
+        let part = self
+            .partial
+            .lock()
+            .ok()?
+            .iter()
+            .find(|(k, _)| k == mem_key)
+            .map(|(_, p)| p.clone())?;
+        let base = part.lock().ok()?.clone();
+        let frames = (base.len() / 2) as u64 * peaks::BASE;
+        Some((base, frames))
+    }
+}
+
+/// Loudness profiles of whole recordings (100 ms steps, a megabyte or so per 3 hours): in memory
+/// for the session and on disk between sessions. An edit list's profile is stitched from these.
+#[derive(Default)]
+struct LoudnessStore {
+    profiles: Mutex<Vec<(String, Arc<Profile>)>>,
+    build: Mutex<()>,
+}
+
+const PROFILES_IN_MEMORY: usize = 16;
+const LOUDNESS_CACHE_MAX_BYTES: u64 = 100 * 1024 * 1024;
 
 const PEAKS_IN_MEMORY: usize = 8;
 const PEAK_CACHE_MAX_BYTES: u64 = 300 * 1024 * 1024;
+
+#[derive(Serialize, Clone)]
+struct PeaksProgress {
+    path: String,
+    done: u64,
+    total: u64,
+}
 
 #[derive(Serialize, Clone)]
 struct ProgressEvent {
@@ -684,7 +726,38 @@ fn peaks_for(app: &AppHandle, store: &PeaksStore, path: &str) -> Result<Arc<Peak
     let peaks = match cache::load(&dir, &key).map_err(|e| e.to_string())? {
         Some(p) => p,
         None => {
-            let built = peaks::build_for_file(file, &mut |_, _| true).map_err(|e| e.to_string())?;
+            // Publish the buckets as they are made, so the timeline can draw the waveform growing.
+            let part = Arc::new(Mutex::new(Vec::<i8>::new()));
+            if let Ok(mut p) = store.partial.lock() {
+                p.push((mem_key.clone(), part.clone()));
+            }
+            let mut last = Instant::now() - Duration::from_secs(1);
+            let built = peaks::build_for_file_with(
+                file,
+                &mut |done, total| {
+                    if done >= total || last.elapsed() >= Duration::from_millis(120) {
+                        last = Instant::now();
+                        let _ = app.emit(
+                            "peaks-progress",
+                            PeaksProgress {
+                                path: path.to_string(),
+                                done,
+                                total,
+                            },
+                        );
+                    }
+                    true
+                },
+                &mut |new| {
+                    if let Ok(mut base) = part.lock() {
+                        base.extend_from_slice(new);
+                    }
+                },
+            );
+            if let Ok(mut p) = store.partial.lock() {
+                p.retain(|(k, _)| *k != mem_key);
+            }
+            let built = built.map_err(|e| e.to_string())?;
             if cache::save(&dir, &key, &built).is_ok() {
                 let _ = cache::prune(&dir, PEAK_CACHE_MAX_BYTES);
             }
@@ -735,6 +808,18 @@ async fn get_peaks(
     let store = store.inner().clone();
     let width = width.min(8192);
     let result = tauri::async_runtime::spawn_blocking(move || {
+        // A build is still running: answer from what it has made so far (never past it).
+        if let Ok(key) = cache::Key::for_file(Path::new(&path)) {
+            let mem_key = format!("{}|{}|{}", key.path, key.size, key.modified_ms);
+            if let Some((base, done)) = store.partial_snapshot(&mem_key) {
+                let bytes: Vec<u8> = Peaks::partial(base, done)
+                    .columns(start, end.min(done), width)
+                    .into_iter()
+                    .map(|v| v as u8)
+                    .collect();
+                return Ok::<_, String>(tauri::ipc::Response::new(bytes));
+            }
+        }
         let peaks = peaks_for(&app, &store, &path)?;
         let bytes: Vec<u8> = peaks
             .columns(start, end, width)
@@ -812,16 +897,172 @@ async fn audio_set_device(
     logged("opening the audio device", result)
 }
 
+/// The loudness profile of a whole recording: from memory, else the disk cache, else measured now.
+fn profile_for(app: &AppHandle, store: &LoudnessStore, path: &str) -> Result<Arc<Profile>, String> {
+    let file = Path::new(path);
+    let key = cache::Key::for_file(file).map_err(|e| e.to_string())?;
+    let mem_key = format!("{}|{}|{}", key.path, key.size, key.modified_ms);
+    let lookup = |store: &LoudnessStore| {
+        store.profiles.lock().ok().and_then(|r| {
+            r.iter()
+                .find(|(k, _)| *k == mem_key)
+                .map(|(_, p)| p.clone())
+        })
+    };
+    if let Some(p) = lookup(store) {
+        return Ok(p);
+    }
+    let _building = store.build.lock().map_err(|e| e.to_string())?;
+    if let Some(p) = lookup(store) {
+        return Ok(p);
+    }
+    let dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| e.to_string())?
+        .join("loudness");
+    let on_disk = cache::path_for(&dir, &key).with_extension("lp");
+    let profile = match std::fs::read(&on_disk)
+        .ok()
+        .and_then(|b| Profile::from_bytes(&b))
+    {
+        Some(p) => p,
+        None => {
+            let d = aiff_core::diagnose_path(file).map_err(|e| e.to_string())?;
+            let fmt = PcmFormat {
+                bits: d.format.bits,
+                channels: d.format.channels,
+                rate: d.format.sample_rate,
+            };
+            let mut f = std::fs::File::open(file).map_err(|e| e.to_string())?;
+            std::io::Seek::seek(&mut f, std::io::SeekFrom::Start(d.audio_start))
+                .map_err(|e| e.to_string())?;
+            let mut throttle =
+                Throttle::new(app, format!("Measuring loudness of {}", file_label(path)));
+            let p = maximizer::measure(
+                std::io::BufReader::with_capacity(1 << 20, f),
+                fmt,
+                d.frames,
+                &mut |_, done, total| {
+                    throttle.emit(done, total);
+                    true
+                },
+            )
+            .map_err(|e| e.to_string())?;
+            if std::fs::create_dir_all(&dir).is_ok()
+                && std::fs::write(&on_disk, p.to_bytes()).is_ok()
+            {
+                let _ = cache::prune_ext(&dir, "lp", LOUDNESS_CACHE_MAX_BYTES);
+            }
+            p
+        }
+    };
+    let profile = Arc::new(profile);
+    if let Ok(mut all) = store.profiles.lock() {
+        all.push((mem_key, profile.clone()));
+        if all.len() > PROFILES_IN_MEMORY {
+            all.remove(0);
+        }
+    }
+    Ok(profile)
+}
+
+/// What the loudness plan for the preview works out, for the editor to show.
+#[derive(Serialize)]
+struct PreviewInfo {
+    input_lufs: f64,
+    static_gain_db: f64,
+    gain_min_db: f64,
+    gain_max_db: f64,
+}
+
+/// Plan the loudness processing for an edit list from the cached profiles of its recordings.
+/// The first time a recording is seen it is measured (progress is reported); after that this is
+/// quick, so trims and re-orders in the editor can be heard processed straight away.
+fn preview_processing(
+    app: &AppHandle,
+    store: &LoudnessStore,
+    clips: &[Clip],
+    l: &LoudnessDto,
+) -> Result<(Processing, PreviewInfo), String> {
+    edit_core::plan(clips).map_err(|e| e.to_string())?; // same checks as playback and export
+    let mut profiles: Vec<(String, Arc<Profile>)> = Vec::new();
+    let mut parts: Vec<(usize, u64, u64)> = Vec::new();
+    for c in clips {
+        let path = c.path.display().to_string();
+        let index = match profiles.iter().position(|(p, _)| *p == path) {
+            Some(i) => i,
+            None => {
+                profiles.push((path.clone(), profile_for(app, store, &path)?));
+                profiles.len() - 1
+            }
+        };
+        let frames = aiff_core::diagnose_path(&c.path)
+            .map_err(|e| e.to_string())?
+            .frames;
+        parts.push((index, c.start_frame, c.end_frame.unwrap_or(frames)));
+    }
+    let refs: Vec<(&Profile, u64, u64)> = parts
+        .iter()
+        .map(|&(i, s, e)| (profiles[i].1.as_ref(), s, e))
+        .collect();
+    let stitched = Profile::stitch(&refs).ok_or("the clips do not share one audio format")?;
+    let params = l.params();
+    let curve = match params.mode {
+        Mode::Loudness(target) => dynamics::leveler::plan(&stitched, target, &params.leveling),
+        Mode::Peak => dynamics::leveler::normalize_peak(&stitched, params.ceiling_db),
+    };
+    let info = PreviewInfo {
+        input_lufs: stitched.integrated(),
+        static_gain_db: curve.static_db,
+        gain_min_db: curve.min_db(),
+        gain_max_db: curve.max_db(),
+    };
+    Ok((
+        Processing {
+            curve: Arc::new(curve),
+            ceiling_db: params.ceiling_db,
+        },
+        info,
+    ))
+}
+
+#[derive(Serialize)]
+struct LoadReply {
+    #[serde(flatten)]
+    info: LoadInfo,
+    /// Present when the preview is being played through the loudness processing.
+    loudness: Option<PreviewInfo>,
+}
+
 #[tauri::command]
 async fn audio_load(
+    app: AppHandle,
     pb: State<'_, Arc<Playback>>,
+    loudness_store: State<'_, Arc<LoudnessStore>>,
     clips: Vec<ClipDto>,
     start_secs: f64,
-) -> Result<LoadInfo, String> {
+    loudness: Option<LoudnessDto>,
+) -> Result<LoadReply, String> {
     let pb = pb.inner().clone();
+    let loudness_store = loudness_store.inner().clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        pb.load(to_clips(&clips), start_secs)
-            .map_err(|e| e.to_string())
+        let clips = to_clips(&clips);
+        let planned = match &loudness {
+            Some(l) => Some(preview_processing(&app, &loudness_store, &clips, l)?),
+            None => None,
+        };
+        let (processing, preview) = match planned {
+            Some((p, i)) => (Some(p), Some(i)),
+            None => (None, None),
+        };
+        let info = pb
+            .load_with(clips, start_secs, processing)
+            .map_err(|e| e.to_string())?;
+        Ok::<_, String>(LoadReply {
+            info,
+            loudness: preview,
+        })
     })
     .await
     .map_err(|e| e.to_string())?;
@@ -941,6 +1182,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(Jobs::default())
         .manage(Arc::new(PeaksStore::default()))
+        .manage(Arc::new(LoudnessStore::default()))
         .manage(Arc::new(playback::start_system()))
         .setup(|app| {
             // Logging first, so anything that goes wrong while starting is recorded.

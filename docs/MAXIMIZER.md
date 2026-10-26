@@ -28,6 +28,14 @@ It lives in `crates/dynamics` (pure sample maths, no Tauri) and runs in the expo
 
 The output has the **same sample format as the input**: 16-bit in, 16-bit out (TPDF dither of one step); 24-bit in, 24-bit out. Nothing is padded to a bigger format. Samples the chain did not change come back bit-for-bit (no dither is added to an untouched signal).
 
+### Hearing it in the editor
+
+The editor has a **Loudness** tab of its own (next to Format & quality and Name, folder & tags). With a mode chosen and "Hear this when playing in the editor" ticked, the preview plays through the same gain curve and limiter as the export, so seeking to any spot (say 2:12:32) and listening tells you what the export will sound like. Untick it to compare with the original; the export keeps the setting either way.
+
+How it works: each recording is measured once, in full (about 17 s for 3 hours, with a progress bar), and its profile is cached in memory and on disk (under 1 MB per 3 hours). The profile of the edit list is then stitched from the cached ones and the gain curve planned in about 10 ms, so trims, splits and re-orders are heard processed straight away. Playback runs the gain curve and limiter on the decoded audio; a seek starts the limiter a few milliseconds early so it has settled and every frame still lands where it is on the timeline.
+
+The preview is within about half a LU of the export: the export makes one more check pass (the rehearsal) that the preview skips. Playback does not include fades, as before.
+
 ### Settings (Export window and Settings > Default export)
 
 | Choice | Meaning |
@@ -99,6 +107,5 @@ It opens in the app like any recording, so the whole feature can be tried by ear
 ## Not done yet
 
 - **Bass control.** The profile already records the energy below 150 Hz. The idea is to turn down only the *excess* bass when two basslines add in a beatmix (a slow dynamic low shelf), instead of lowering the whole mix. On this recording most of the energy is bass, so the leveller already acts mostly on it; whether bass-only control is audibly better is for listening to decide. Escalation path: a 2-band linear-phase split.
-- **Preview.** Playback does not apply the maximizer (as with fades). The gain curve is precomputed and the limiter is cheap, so it can be added.
 - **Loudness lane on the timeline** showing short-term loudness and the planned gain before exporting.
 - **Speed.** Measuring could be cached per source file, and the passes could use several threads. Not needed yet: a 3 h set takes about 1.5 minutes end to end.

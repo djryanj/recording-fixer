@@ -52,6 +52,8 @@
   let viewX = $state(0);
   let rev = $state(0); // bumped whenever peak data arrives, to trigger a redraw
   let loading = $state(new Set<string>());
+  /** Waveforms still being built: how far each has got, so they can be drawn as they grow. */
+  let building = $state(new Map<string, { done: number; total: number }>());
   let failed = $state(new Map<string, string>());
   let dragInfo = $state<{ insertAt: number } | null>(null);
   /** The rubber band while dragging across the waveform to zoom, in view pixels. */
@@ -135,6 +137,9 @@
     try {
       await api.ensurePeaks(path);
       ready.add(path);
+      const left = new Map(building);
+      left.delete(path);
+      building = left;
     } catch (e) {
       failed = new Map(failed).set(path, String(e));
     } finally {
@@ -153,7 +158,9 @@
   async function fetchVisible() {
     for (const p of placed) {
       const c = p.clip;
-      if (!ready.has(c.path)) continue;
+      // A waveform still being built is drawn from what exists so far.
+      const progress = ready.has(c.path) ? undefined : building.get(c.path);
+      if (!ready.has(c.path) && !(progress && progress.done > 0)) continue;
       const x0 = p.x * pxPerSec - viewX;
       const w = p.w * pxPerSec;
       const visL = Math.max(0, -x0);
@@ -163,12 +170,12 @@
       const a = c.start + (Math.max(0, visL - margin) / pxPerSec) * c.rate;
       const b = c.start + (Math.min(w, visR + margin) / pxPerSec) * c.rate;
       const s = Math.max(0, Math.floor(a));
-      const e = Math.min(c.total, Math.ceil(b));
+      const e = Math.min(progress ? Math.min(c.total, progress.done) : c.total, Math.ceil(b));
       if (e <= s) continue;
       const wantedPerFrame = pxPerSec / c.rate;
 
       // Close enough to see individual samples: fetch them exactly instead of peaks.
-      if (c.rate / pxPerSec <= FINE_FRAMES_PER_PX && e - s <= MAX_SAMPLE_FRAMES) {
+      if (!progress && c.rate / pxPerSec <= FINE_FRAMES_PER_PX && e - s <= MAX_SAMPLE_FRAMES) {
         const got = sampleEntries.get(c.id);
         if (got && got.path === c.path && got.s <= s && got.e >= e) continue;
         const skey = `s|${c.id}|${s}|${e}`;
@@ -385,8 +392,29 @@
           ctx.globalAlpha = 1;
         }
       }
+      // A waveform that is still being built: dim what is not there yet and mark how far it has got.
+      const grow = building.get(c.path);
+      if (grow && !ready.has(c.path)) {
+        const edge = x0 + ((grow.done - c.start) / c.rate) * pxPerSec;
+        const from = Math.min(x0 + w, Math.max(x0, edge));
+        ctx.fillStyle = col.inset;
+        ctx.globalAlpha = 0.55;
+        ctx.fillRect(from, RULER_H + 1, x0 + w - from, LANE_H);
+        ctx.globalAlpha = 1;
+        if (edge >= x0 && edge <= x0 + w) {
+          ctx.fillStyle = col.amber;
+          ctx.fillRect(edge - 1, RULER_H + 1, 2, LANE_H);
+        }
+      }
       // title strip: the name, and a grip to show that it can be dragged to reorder
-      const status = failed.get(c.path) ? '  [waveform unavailable]' : loading.has(c.path) ? '  [analysing…]' : '';
+      const pct = grow ? Math.min(99, Math.floor((grow.done / Math.max(1, grow.total)) * 100)) : null;
+      const status = failed.get(c.path)
+        ? '  [waveform unavailable]'
+        : loading.has(c.path)
+          ? pct != null && !ready.has(c.path)
+            ? `  [building waveform ${pct}%]`
+            : '  [analysing…]'
+          : '';
       ctx.font = '600 11px "Barlow Condensed", "Barlow", sans-serif';
       const label = `${String(i + 1).padStart(2, '0')}  ${c.name.toUpperCase()}${status}`;
       ctx.fillStyle = col.inset;
@@ -477,7 +505,7 @@
 
   $effect(() => {
     // Everything the drawing depends on, read here so the effect re-runs.
-    void [placed, selectedId, playheadSecs, pxPerSec, viewX, viewW, rev, loading, failed, dragInfo, marquee, fadeInSecs, fadeOutSecs];
+    void [placed, selectedId, playheadSecs, pxPerSec, viewX, viewW, rev, loading, building, failed, dragInfo, marquee, fadeInSecs, fadeOutSecs];
     draw();
   });
 
@@ -690,7 +718,19 @@
       }
     };
     scroller!.addEventListener('wheel', onWheel, { passive: false });
+    // The backend reports how far each waveform build has got; draw what exists.
+    let offPeaks = () => {};
+    let unmounted = false;
+    void api
+      .onPeaksProgress((p) => {
+        if (ready.has(p.path)) return;
+        building = new Map(building).set(p.path, { done: p.done, total: p.total });
+        schedule();
+      })
+      .then((un) => (unmounted ? un() : (offPeaks = un)));
     return () => {
+      unmounted = true;
+      offPeaks();
       ro.disconnect();
       scroller?.removeEventListener('wheel', onWheel);
       clearTimeout(fetchTimer);

@@ -346,6 +346,7 @@ describe('previewing from the list', () => {
     expect(backend.of('audio_load')[0]).toEqual({
       clips: [{ path: 'C:/rec/Serato Recording 2.aif', start_frame: 0, end_frame: null }],
       startSecs: 0,
+      loudness: null,
     });
     // The transport reflects what is loaded.
     expect(await screen.findByRole('button', { name: 'Pause Serato Recording 2.aif' })).toBeInTheDocument();
@@ -648,13 +649,20 @@ describe('loudness maximizer', () => {
     await u.click(screen.getByRole('button', { name: 'Edit & export…' }));
     return screen.findByRole('dialog', { name: 'Editor' });
   }
+  /** The loudness controls live on their own tab of the editor. */
+  async function loudnessTab(u: ReturnType<typeof user>, editor: HTMLElement) {
+    await u.click(within(editor).getByRole('tab', { name: /Loudness/ }));
+    return within(editor).getByRole('group', { name: 'Loudness' });
+  }
   const sentJob = () => (backend.of('export_audio')[0] as { job: Record<string, unknown> }).job;
 
   it('leaves the audio alone unless asked', async () => {
     const u = user();
     await mount();
     const editor = await openEditor(u);
-    const group = within(editor).getByRole('group', { name: 'Loudness' });
+    // Not among the format and quality choices.
+    expect(within(editor).queryByRole('group', { name: 'Loudness' })).toBeNull();
+    const group = await loudnessTab(u, editor);
     expect(within(group).getByRole('radio', { name: 'Leave as recorded' })).toBeChecked();
     expect(within(group).queryByLabelText('Target loudness')).toBeNull();
     await u.click(within(editor).getByRole('button', { name: 'Export' }));
@@ -666,7 +674,7 @@ describe('loudness maximizer', () => {
     const u = user();
     await mount();
     const editor = await openEditor(u);
-    const group = within(editor).getByRole('group', { name: 'Loudness' });
+    const group = await loudnessTab(u, editor);
     await u.click(within(group).getByRole('radio', { name: 'Match a loudness' }));
     await u.click(within(group).getByRole('button', { name: 'Quieter −16' }));
     await u.selectOptions(within(group).getByLabelText('Evening out'), 'strong');
@@ -683,7 +691,7 @@ describe('loudness maximizer', () => {
     const u = user();
     await mount();
     const editor = await openEditor(u);
-    const group = within(editor).getByRole('group', { name: 'Loudness' });
+    const group = await loudnessTab(u, editor);
     await u.click(within(group).getByRole('radio', { name: 'Raise to a peak limit' }));
     expect(within(group).queryByLabelText('Evening out')).toBeNull();
     const limit = within(group).getByLabelText('Peak limit');
@@ -703,6 +711,76 @@ describe('loudness maximizer', () => {
     expect(JSON.parse(localStorage.getItem('exportSettings.v1')!).loudness).toMatchObject({ mode: 'lufs', lufs: -14 });
     await u.click(screen.getByRole('button', { name: 'Done' }));
     const editor = await openEditor(u);
-    expect(within(within(editor).getByRole('group', { name: 'Loudness' })).getByRole('radio', { name: 'Match a loudness' })).toBeChecked();
+    expect(within(await loudnessTab(u, editor)).getByRole('radio', { name: 'Match a loudness' })).toBeChecked();
+  });
+
+  const loadsWith = () => backend.of('audio_load').map((a) => a.loudness);
+
+  it('plays the editor preview through the processing when it is on, and says what it is doing', async () => {
+    const u = user();
+    await mount();
+    const editor = await openEditor(u);
+    await waitFor(() => expect(loadsWith().length).toBeGreaterThan(0));
+    expect(loadsWith().at(-1)).toBeNull(); // off: the original
+
+    const group = await loudnessTab(u, editor);
+    await u.click(within(group).getByRole('radio', { name: 'Match a loudness' }));
+    await waitFor(() => expect(loadsWith().at(-1)).toEqual({ mode: 'lufs', lufs: -14, ceiling_db: -1, leveling: 'medium' }));
+    const note = await within(group).findByText(/Playing with it on/);
+    expect(note).toHaveTextContent('−19.6 LUFS');
+    expect(note).toHaveTextContent('+5.6 dB');
+    expect(note).toHaveTextContent('between +3.4 dB and +9.0 dB');
+  });
+
+  it('changing the target while listening reloads the preview with it', async () => {
+    const u = user();
+    await mount();
+    const editor = await openEditor(u);
+    const group = await loudnessTab(u, editor);
+    await u.click(within(group).getByRole('radio', { name: 'Match a loudness' }));
+    await u.click(within(group).getByRole('button', { name: 'Louder −11' }));
+    await waitFor(() => expect(loadsWith().at(-1)).toMatchObject({ lufs: -11 }));
+  });
+
+  it('can be switched off in the preview to compare with the original, without changing the export', async () => {
+    const u = user();
+    await mount();
+    const editor = await openEditor(u);
+    const group = await loudnessTab(u, editor);
+    await u.click(within(group).getByRole('radio', { name: 'Match a loudness' }));
+    await waitFor(() => expect(loadsWith().at(-1)).not.toBeNull());
+    await u.click(within(group).getByRole('checkbox', { name: /Hear this when playing/ }));
+    await waitFor(() => expect(loadsWith().at(-1)).toBeNull());
+    // The export still carries the setting.
+    await u.click(within(editor).getByRole('button', { name: 'Export' }));
+    await waitFor(() => expect(backend.of('export_audio')).toHaveLength(1));
+    expect(sentJob().loudness).toMatchObject({ mode: 'lufs' });
+  });
+
+  it('shows how far the first measurement has got', async () => {
+    const u = user();
+    await mount();
+    const editor = await openEditor(u);
+    const group = await loudnessTab(u, editor);
+    // Hold the reload open, as the first measurement of a long recording does.
+    const real = h.invoke.getMockImplementation()!;
+    let finish!: () => void;
+    h.invoke.mockImplementation((cmd: string, args: Record<string, unknown>) =>
+      cmd === 'audio_load' && args.loudness ? new Promise((r) => (finish = () => r(real(cmd, args)))) : real(cmd, args),
+    );
+    await u.click(within(group).getByRole('radio', { name: 'Match a loudness' }));
+    expect(await within(group).findByRole('progressbar', { name: 'Measuring loudness' })).toBeInTheDocument();
+    finish();
+    await within(group).findByText(/Playing with it on/);
+    expect(within(group).queryByRole('progressbar')).toBeNull();
+  });
+
+  it('says so when the preview cannot use the setting', async () => {
+    const u = user();
+    await mount({ failures: { audio_load: 'the clips do not share one audio format' } });
+    const editor = await openEditor(u);
+    const group = await loudnessTab(u, editor);
+    await u.click(within(group).getByRole('radio', { name: 'Match a loudness' }));
+    expect(await within(group).findByText(/could not use this: the clips do not share one audio format/)).toBeInTheDocument();
   });
 });

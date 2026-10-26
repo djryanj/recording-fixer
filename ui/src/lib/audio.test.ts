@@ -147,7 +147,7 @@ describe('transport', () => {
     const a = new AudioStore();
     mocked.audioLoad.mockResolvedValue({ duration_secs: 5, total_frames: 1, rate: 44100, channels: 2, bits: 16 });
     await a.preview('C:/r/a.aif', 'a.aif');
-    expect(mocked.audioLoad).toHaveBeenCalledWith([{ path: 'C:/r/a.aif', start_frame: 0, end_frame: null }], 0);
+    expect(mocked.audioLoad).toHaveBeenCalledWith([{ path: 'C:/r/a.aif', start_frame: 0, end_frame: null }], 0, null);
     expect(mocked.audioPlay).toHaveBeenCalled();
     expect(a.label).toBe('a.aif');
   });

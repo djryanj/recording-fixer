@@ -2885,6 +2885,7 @@ version = "0.1.0"
 dependencies = [
  "aiff-core",
  "cpal",
+ "dynamics",
  "edit-core",
  "ringbuf",
  "rubato",

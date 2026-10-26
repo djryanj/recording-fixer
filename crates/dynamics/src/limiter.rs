@@ -228,6 +228,16 @@ impl Limiter {
         self.release_coef = Self::coef(self.rate, ms);
     }
 
+    /// Frames the output lags the input.
+    pub fn delay_frames(&self) -> usize {
+        self.delay
+    }
+
+    /// Frames of audio to feed before the point of interest so the limiter's state is settled there.
+    pub fn warmup_frames(&self) -> usize {
+        self.delay + 2 * self.span
+    }
+
     pub fn stats(&self) -> LimiterStats {
         let n = self.sampled.max(1) as f64;
         LimiterStats {

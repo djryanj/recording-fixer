@@ -492,10 +492,13 @@ describe('the real app', () => {
     await clickXp(XP.button('Edit & export…'));
     await find("//div[@aria-label='Editor']");
     await clickXp("//div[@aria-label='Editor']//label[.//b[normalize-space()='AIFF']]/input"); // the MP3 test left MP3 selected
+    await clickXp("//div[@aria-label='Editor']//button[@role='tab'][contains(.,'Loudness')]");
     await clickXp("//div[@aria-label='Editor']//label[contains(.,'Match a loudness')]/input");
     const target = await find("//input[@id='lufs']");
     await target.clear();
     await target.sendKeys('-20');
+    // The preview is measured and planned by the real backend, and says what it is doing.
+    await untilText(/Playing with it on: the recording measures/i, 20000);
     const before = new Set(dirFiles());
     await clickXp("//div[@aria-label='Editor']" + XP.button('Export'));
     await untilText(/Exported .*\.aif\. Loudness -(19\.[89]|20\.[0-2]) LUFS/i, 30000);

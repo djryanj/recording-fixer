@@ -7,6 +7,7 @@
   import { clampFade, defaultFormat, encoderLabel, sanitizeFormat, sanitizeLoudness, type FormatState, type LoudnessState } from './exportOptions';
   import { loadSavedExport, patchSavedExport } from './exportSettings';
   import FormatPanel from './FormatPanel.svelte';
+  import LoudnessPanel from './LoudnessPanel.svelte';
 
   interface Props {
     tool: ToolStatus | null;
@@ -90,7 +91,13 @@
     <section aria-label="Default export">
       <h3 class="label">Default export</h3>
       <p class="why">What a new export starts with. You can still change it for any one export in the editor, which then remembers what you used last.</p>
-      <FormatPanel bind:format bind:fadeIn bind:fadeOut bind:loudness {tool} durationSecs={null} aiffBytes={null} onlocate={onchoose} />
+      <FormatPanel bind:format bind:fadeIn bind:fadeOut {tool} durationSecs={null} aiffBytes={null} onlocate={onchoose} />
+    </section>
+
+    <section aria-label="Default loudness">
+      <h3 class="label">Default loudness</h3>
+      <p class="why">Whether new exports change the loudness. Off keeps the audio exactly as recorded.</p>
+      <LoudnessPanel bind:loudness />
     </section>
 
     <section aria-label="ffmpeg">

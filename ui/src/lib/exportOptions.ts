@@ -107,6 +107,8 @@ export interface LoudnessState {
   /** True-peak limit in dBTP. */
   ceiling: number | null;
   leveling: LevelingChoice;
+  /** Play the editor's preview through the processing, to hear what the export will do. */
+  preview: boolean;
 }
 
 export const LEVELING_CHOICES: { value: LevelingChoice; label: string }[] = [
@@ -123,7 +125,7 @@ export const LUFS_PRESETS = [
   { lufs: -11, label: 'Louder −11' },
 ];
 
-export const defaultLoudness = (): LoudnessState => ({ mode: 'off', lufs: -14, ceiling: -1, leveling: 'medium' });
+export const defaultLoudness = (): LoudnessState => ({ mode: 'off', lufs: -14, ceiling: -1, leveling: 'medium', preview: true });
 
 /** Fill in anything a saved value lacks, and drop anything that is not valid. */
 export function sanitizeLoudness(s: Partial<LoudnessState> | undefined): LoudnessState {
@@ -134,6 +136,7 @@ export function sanitizeLoudness(s: Partial<LoudnessState> | undefined): Loudnes
     lufs: typeof s.lufs === 'number' && Number.isFinite(s.lufs) ? s.lufs : d.lufs,
     ceiling: typeof s.ceiling === 'number' && Number.isFinite(s.ceiling) ? s.ceiling : d.ceiling,
     leveling: LEVELING_CHOICES.some((c) => c.value === s.leveling) ? (s.leveling as LevelingChoice) : d.leveling,
+    preview: s.preview !== false,
   };
 }
 

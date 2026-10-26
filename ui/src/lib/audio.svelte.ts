@@ -2,7 +2,7 @@
  * Client-side view of the playback engine: polls its state, remembers the chosen output device,
  * and offers the transport actions. There is one engine, so there is one of these.
  */
-import { api, emptyPlayback, type AudioDevice, type Clip, type DeviceSelection, type OpenedDevice, type PlaybackState } from './api';
+import { api, emptyPlayback, type AudioDevice, type Clip, type DeviceSelection, type LoudnessJob, type OpenedDevice, type PlaybackState } from './api';
 
 const KEY = 'audioDevice.v1';
 
@@ -114,10 +114,10 @@ export class AudioStore {
     }
   }
 
-  async load(clips: Clip[], startSecs: number, label: string) {
+  async load(clips: Clip[], startSecs: number, label: string, loudness: LoudnessJob | null = null) {
     this.error = null;
     try {
-      const info = await api.audioLoad(clips, startSecs);
+      const info = await api.audioLoad(clips, startSecs, loudness);
       this.label = label;
       this.sourcePath = '';
       await this.poll();

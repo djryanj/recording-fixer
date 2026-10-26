@@ -3,9 +3,18 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const h = vi.hoisted(() => ({ invoke: vi.fn() }));
+const h = vi.hoisted(() => ({
+  invoke: vi.fn(),
+  /** Handlers the component registered for backend events, by event name. */
+  events: {} as Record<string, (e: { payload: unknown }) => void>,
+}));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: h.invoke }));
-vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn(async (name: string, cb: (e: { payload: unknown }) => void) => {
+    h.events[name] = cb;
+    return () => {};
+  }),
+}));
 
 import Timeline from './Timeline.svelte';
 import Harness from '../test/TimelineHarness.svelte';
@@ -489,5 +498,48 @@ describe('timeline drawing and waveform data', () => {
     expect(backend.calls.filter((c) => c.cmd === 'get_peaks')).toHaveLength(0);
     release();
     await waitFor(() => expect(backend.calls.some((c) => c.cmd === 'get_peaks')).toBe(true), { timeout: 3000 });
+  });
+
+  describe('while a waveform is still being built', () => {
+    const texts = () => (globalThis as unknown as { __canvasCalls: { fn: string; args: unknown[] }[] }).__canvasCalls.filter((c) => c.fn === 'fillText').map((c) => String(c.args[0]));
+
+    async function startBuilding() {
+      let release!: () => void;
+      h.invoke.mockReset();
+      backend = installBackend(h.invoke);
+      const real = h.invoke.getMockImplementation()!;
+      h.invoke.mockImplementation((cmd: string, args: Record<string, unknown>) =>
+        cmd === 'ensure_peaks' ? new Promise((r) => (release = () => r({ frames: 1 }))) : real(cmd, args),
+      );
+      render(Timeline, { clips: [clip(1, 100)], selectedId: null, playheadSecs: 0, playing: false, pxPerSec: 1, onselect: vi.fn(), onseek: vi.fn(), onchange: vi.fn() });
+      await waitFor(() => expect(h.events['peaks-progress']).toBeTypeOf('function'));
+      return release;
+    }
+
+    it('draws what exists so far and shows how far it has got', async () => {
+      await startBuilding();
+      const total = 100 * RATE;
+      h.events['peaks-progress']({ payload: { path: 'C:/rec/1.aif', done: total / 4, total } });
+      // Only the finished quarter is requested, never beyond what the backend has made.
+      await waitFor(() => expect(backend.calls.some((c) => c.cmd === 'get_peaks')).toBe(true), { timeout: 3000 });
+      const asked = backend.of('get_peaks')[0] as { start: number; end: number };
+      expect(asked.start).toBe(0);
+      expect(asked.end).toBe(total / 4);
+      await waitFor(() => expect(texts().some((t) => t.includes('building waveform 25%'))).toBe(true));
+    });
+
+    it('keeps drawing further as more arrives, then the full waveform when it is done', async () => {
+      const release = await startBuilding();
+      const total = 100 * RATE;
+      const progress = (done: number) => h.events['peaks-progress']({ payload: { path: 'C:/rec/1.aif', done, total } });
+      progress(total / 4);
+      await waitFor(() => expect(backend.of('get_peaks')).toHaveLength(1), { timeout: 3000 });
+      progress(total / 2);
+      await waitFor(() => expect(backend.of('get_peaks').some((a) => (a as { end: number }).end === total / 2)).toBe(true), { timeout: 3000 });
+      await waitFor(() => expect(texts().some((t) => t.includes('building waveform 50%'))).toBe(true));
+      release();
+      await waitFor(() => expect(backend.of('get_peaks').some((a) => (a as { end: number }).end === total)).toBe(true), { timeout: 3000 });
+      await waitFor(() => expect(texts().at(-1)).not.toContain('building waveform'));
+    });
   });
 });

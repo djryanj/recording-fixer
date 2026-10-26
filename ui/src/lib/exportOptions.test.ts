@@ -142,19 +142,21 @@ describe('loudness options', () => {
   });
 
   it('builds the job from the form, keeping numbers in range', () => {
-    expect(buildLoudness({ mode: 'lufs', lufs: -14, ceiling: -1, leveling: 'medium' })).toEqual({ mode: 'lufs', lufs: -14, ceiling_db: -1, leveling: 'medium' });
-    expect(buildLoudness({ mode: 'lufs', lufs: 5, ceiling: -50, leveling: 'strong' })).toEqual({ mode: 'lufs', lufs: -3, ceiling_db: -20, leveling: 'strong' });
+    expect(buildLoudness({ mode: 'lufs', lufs: -14, ceiling: -1, leveling: 'medium', preview: true })).toEqual({ mode: 'lufs', lufs: -14, ceiling_db: -1, leveling: 'medium' });
+    expect(buildLoudness({ mode: 'lufs', lufs: 5, ceiling: -50, leveling: 'strong', preview: true })).toEqual({ mode: 'lufs', lufs: -3, ceiling_db: -20, leveling: 'strong' });
     // An empty field falls back to the usual value rather than sending NaN.
-    expect(buildLoudness({ mode: 'lufs', lufs: null, ceiling: null, leveling: 'gentle' })).toEqual({ mode: 'lufs', lufs: -14, ceiling_db: -1, leveling: 'gentle' });
+    expect(buildLoudness({ mode: 'lufs', lufs: null, ceiling: null, leveling: 'gentle', preview: true })).toEqual({ mode: 'lufs', lufs: -14, ceiling_db: -1, leveling: 'gentle' });
   });
 
   it('peak mode is a steady gain: no evening out', () => {
-    expect(buildLoudness({ mode: 'peak', lufs: -14, ceiling: -0.1, leveling: 'strong' })).toMatchObject({ mode: 'peak', ceiling_db: -0.1, leveling: 'off' });
+    expect(buildLoudness({ mode: 'peak', lufs: -14, ceiling: -0.1, leveling: 'strong', preview: true })).toMatchObject({ mode: 'peak', ceiling_db: -0.1, leveling: 'off' });
   });
 
   it('repairs whatever was saved', () => {
     expect(sanitizeLoudness(undefined)).toEqual(defaultLoudness());
     expect(sanitizeLoudness({ mode: 'bogus' as never, lufs: NaN, leveling: 'x' as never })).toEqual(defaultLoudness());
-    expect(sanitizeLoudness({ mode: 'peak', lufs: -9, ceiling: -0.5, leveling: 'gentle' })).toEqual({ mode: 'peak', lufs: -9, ceiling: -0.5, leveling: 'gentle' });
+    expect(sanitizeLoudness({ mode: 'peak', lufs: -9, ceiling: -0.5, leveling: 'gentle', preview: false })).toEqual({ mode: 'peak', lufs: -9, ceiling: -0.5, leveling: 'gentle', preview: false });
+    // Saved before the preview switch existed: it defaults to on.
+    expect(sanitizeLoudness({ mode: 'lufs', lufs: -14, ceiling: -1, leveling: 'medium' }).preview).toBe(true);
   });
 });

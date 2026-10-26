@@ -211,7 +211,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. [CLAUDE.md
 
 ## Loudness (optional)
 
-When exporting you can choose **Match a loudness** (for example −14 LUFS for streaming) or **Raise to a peak limit**. It brings the whole set to the target, turns down stretches that are much louder than their surroundings (two tracks beatmixed) and turns up a track that was left too quiet, keeps breakdowns quiet, and uses a true-peak limiter so nothing goes over the limit. The output keeps the recording's own bit depth. It is off unless you choose it, because it changes the audio. Details, measurements and suggested listening spots are in [docs/MAXIMIZER.md](docs/MAXIMIZER.md).
+When exporting you can choose **Match a loudness** (for example −14 LUFS for streaming) or **Raise to a peak limit**. It brings the whole set to the target, turns down stretches that are much louder than their surroundings (two tracks beatmixed) and turns up a track that was left too quiet, keeps breakdowns quiet, and uses a true-peak limiter so nothing goes over the limit. The output keeps the recording's own bit depth. It is off unless you choose it, because it changes the audio. The editor's **Loudness** tab lets you hear it while playing before you export. Details, measurements and suggested listening spots are in [docs/MAXIMIZER.md](docs/MAXIMIZER.md).
 
 ## Privacy and logs
 

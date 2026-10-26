@@ -45,7 +45,142 @@ pub struct Profile {
     prefix: Vec<f64>,
 }
 
+const MAGIC: &[u8; 8] = b"RFLPROF1";
+
+fn running_sums(k_ms: &[f64]) -> Vec<f64> {
+    let mut prefix = Vec::with_capacity(k_ms.len() + 1);
+    let mut sum = 0.0;
+    prefix.push(0.0);
+    for &e in k_ms {
+        sum += e;
+        prefix.push(sum);
+    }
+    prefix
+}
+
 impl Profile {
+    /// Assemble a profile from measured steps (band statistics are not kept).
+    pub fn from_parts(
+        rate: f64,
+        channels: usize,
+        hop_frames: usize,
+        frames: u64,
+        k_ms: Vec<f64>,
+        peak: Vec<f32>,
+    ) -> Profile {
+        let prefix = running_sums(&k_ms);
+        Profile {
+            rate,
+            channels,
+            hop_frames,
+            frames,
+            k_ms,
+            low_ms: Vec::new(),
+            full_ms: Vec::new(),
+            peak,
+            prefix,
+        }
+    }
+
+    /// A compact form for the on-disk cache (energies as f32: far finer than any decision made from them).
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(48 + self.hops() * 8);
+        out.extend_from_slice(MAGIC);
+        out.extend_from_slice(&self.rate.to_le_bytes());
+        out.extend_from_slice(&(self.channels as u32).to_le_bytes());
+        out.extend_from_slice(&(self.hop_frames as u32).to_le_bytes());
+        out.extend_from_slice(&self.frames.to_le_bytes());
+        out.extend_from_slice(&(self.hops() as u64).to_le_bytes());
+        for &e in &self.k_ms {
+            out.extend_from_slice(&(e as f32).to_le_bytes());
+        }
+        for &p in &self.peak {
+            out.extend_from_slice(&p.to_le_bytes());
+        }
+        out
+    }
+
+    pub fn from_bytes(b: &[u8]) -> Option<Profile> {
+        if b.len() < 40 || &b[..8] != MAGIC {
+            return None;
+        }
+        let rate = f64::from_le_bytes(b[8..16].try_into().ok()?);
+        let channels = u32::from_le_bytes(b[16..20].try_into().ok()?) as usize;
+        let hop_frames = u32::from_le_bytes(b[20..24].try_into().ok()?) as usize;
+        let frames = u64::from_le_bytes(b[24..32].try_into().ok()?);
+        let n = u64::from_le_bytes(b[32..40].try_into().ok()?) as usize;
+        if b.len() != 40 + n * 8 || hop_frames == 0 || !rate.is_finite() || rate <= 0.0 {
+            return None;
+        }
+        let f32s = |from: usize| -> Vec<f32> {
+            b[from..from + n * 4]
+                .chunks(4)
+                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                .collect()
+        };
+        let k_ms: Vec<f64> = f32s(40).into_iter().map(f64::from).collect();
+        Some(Profile::from_parts(
+            rate,
+            channels,
+            hop_frames,
+            frames,
+            k_ms,
+            f32s(40 + n * 4),
+        ))
+    }
+
+    /// The profile of several stretches played one after another: `(profile, start_frame, end_frame)`
+    /// of the source each. Stretches rarely start on a step boundary, so each step of the result is
+    /// the frame-weighted average of the source steps it overlaps. Accurate to a fraction of a step,
+    /// which is far finer than the seconds-long windows the leveller works with. `None` if the
+    /// stretches do not share one format or there are none.
+    pub fn stitch(parts: &[(&Profile, u64, u64)]) -> Option<Profile> {
+        let first = parts.first()?.0;
+        if parts.iter().any(|(p, s, e)| {
+            p.rate != first.rate
+                || p.channels != first.channels
+                || p.hop_frames != first.hop_frames
+                || s >= e
+        }) {
+            return None;
+        }
+        let h = first.hop_frames as u64;
+        let total: u64 = parts.iter().map(|(_, s, e)| e - s).sum();
+        let hops = total.div_ceil(h) as usize;
+        let (mut energy, mut weight, mut peak) =
+            (vec![0.0f64; hops], vec![0u64; hops], vec![0f32; hops]);
+        let mut at = 0u64; // where this stretch begins in the combined audio
+        for &(p, start, end) in parts {
+            for i in (start / h)..end.div_ceil(h).min(p.hops() as u64) {
+                // The part of source step `i` inside the stretch, and where that lands in the result.
+                let (a, b) = ((i * h).max(start), ((i + 1) * h).min(end));
+                let (mut x, to) = (at + (a - start), at + (b - start));
+                while x < to {
+                    let j = x / h;
+                    let upto = to.min((j + 1) * h);
+                    energy[j as usize] += p.k_ms[i as usize] * (upto - x) as f64;
+                    weight[j as usize] += upto - x;
+                    peak[j as usize] = peak[j as usize].max(p.peak[i as usize]);
+                    x = upto;
+                }
+            }
+            at += end - start;
+        }
+        let k_ms = energy
+            .iter()
+            .zip(&weight)
+            .map(|(&e, &w)| if w > 0 { e / w as f64 } else { 0.0 })
+            .collect();
+        Some(Profile::from_parts(
+            first.rate,
+            first.channels,
+            first.hop_frames,
+            total,
+            k_ms,
+            peak,
+        ))
+    }
+
     pub fn hops(&self) -> usize {
         self.k_ms.len()
     }
@@ -240,13 +375,7 @@ impl Analyzer {
         if self.in_hop > 0 {
             self.close_hop();
         }
-        let mut prefix = Vec::with_capacity(self.k_ms.len() + 1);
-        let mut sum = 0.0;
-        prefix.push(0.0);
-        for &e in &self.k_ms {
-            sum += e;
-            prefix.push(sum);
-        }
+        let prefix = running_sums(&self.k_ms);
         Profile {
             rate: self.rate,
             channels: self.channels,
@@ -344,6 +473,55 @@ mod tests {
         let p = analyse(rate, &sine(rate, -20.0, 1.55));
         assert_eq!(p.hops(), 16);
         assert_eq!(p.frames, (rate * 1.55) as u64);
+    }
+
+    #[test]
+    fn a_profile_survives_the_cache_file() {
+        let rate = 44_100.0;
+        let p = analyse(rate, &sine(rate, -20.0, 5.0));
+        let q = Profile::from_bytes(&p.to_bytes()).unwrap();
+        assert_eq!(
+            (q.hops(), q.frames, q.hop_frames),
+            (p.hops(), p.frames, p.hop_frames)
+        );
+        assert!((q.integrated() - p.integrated()).abs() < 1e-4);
+        assert_eq!(q.peak, p.peak);
+        assert!(Profile::from_bytes(b"junk").is_none());
+        let mut cut = p.to_bytes();
+        cut.pop();
+        assert!(Profile::from_bytes(&cut).is_none());
+    }
+
+    #[test]
+    fn stitching_follows_the_audio_not_the_step_grid() {
+        // 3.37 s of a -20 source then 3.1 s of a -30 one, neither starting on a step boundary.
+        let rate = 44_100.0;
+        let pa = analyse(rate, &sine(rate, -20.0, 6.0));
+        let pb = analyse(rate, &sine(rate, -30.0, 6.0));
+        let (la, lb) = ((3.37 * rate) as u64, (3.1 * rate) as u64);
+        let s = Profile::stitch(&[(&pa, 22_000, 22_000 + la), (&pb, 9_000, 9_000 + lb)]).unwrap();
+        assert_eq!(s.frames, la + lb);
+        assert_eq!(s.hops(), (s.frames as usize).div_ceil(s.hop_frames));
+        let level = |t: f64| lufs(s.k_ms[(t / s.hop_secs()) as usize]);
+        assert!((level(1.0) + 20.0).abs() < 0.1, "{}", level(1.0));
+        assert!((level(5.0) + 30.0).abs() < 0.1, "{}", level(5.0));
+        // The join is at 3.37 s: still the first level just before it, the second just after.
+        assert!(
+            level(3.25) > -20.1 && level(3.5) < -29.9,
+            "{} {}",
+            level(3.25),
+            level(3.5)
+        );
+        assert!(s.peak.iter().all(|&p| p > 0.0));
+    }
+
+    #[test]
+    fn stitching_refuses_mixed_formats_and_empty_input() {
+        let p = analyse(44_100.0, &sine(44_100.0, -20.0, 2.0));
+        let q = analyse(48_000.0, &sine(48_000.0, -20.0, 2.0));
+        assert!(Profile::stitch(&[(&p, 0, 1000), (&q, 0, 1000)]).is_none());
+        assert!(Profile::stitch(&[]).is_none());
+        assert!(Profile::stitch(&[(&p, 500, 500)]).is_none());
     }
 
     #[test]
