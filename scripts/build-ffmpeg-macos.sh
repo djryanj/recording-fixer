@@ -8,6 +8,8 @@
 #   FFmpeg 7.1.1   https://ffmpeg.org/releases/ffmpeg-7.1.1.tar.xz  (signed; signature at the same URL + .asc)
 #   LAME 3.100     https://sourceforge.net/projects/lame/files/lame/3.100/
 # Those are the sources to offer if anyone asks for the corresponding source of the bundled ffmpeg.
+#
+# Written for the bash 3.2 that macOS ships: no empty-array expansions under "set -u", no associative arrays.
 set -euo pipefail
 
 FFMPEG_VERSION=7.1.1
@@ -27,11 +29,17 @@ fetch() { # url file sha256
   echo "$3  $2" | shasum -a 256 -c - >/dev/null || { echo "checksum mismatch for $2" >&2; exit 1; }
 }
 
+# Run a build step with its output in a log: quiet when it works, the tail of the log when it does not.
+quietly() { # logfile command...
+  local log="$1"; shift
+  "$@" >"$log" 2>&1 || { echo "FAILED: $*" >&2; tail -80 "$log" >&2; exit 1; }
+}
+
 fetch "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz" "$work/ffmpeg-$FFMPEG_VERSION.tar.xz" "$FFMPEG_SHA256"
 fetch "https://downloads.sourceforge.net/project/lame/lame/$LAME_VERSION/lame-$LAME_VERSION.tar.gz" "$work/lame-$LAME_VERSION.tar.gz" "$LAME_SHA256"
 
 build_arch() { # arm64 | x86_64
-  local arch="$1" triple host_arch dir prefix cflags
+  local arch="$1" triple host_arch dir prefix cflags cross
   case "$arch" in
     arm64) triple=aarch64-apple-darwin ;;
     x86_64) triple=x86_64-apple-darwin ;;
@@ -43,23 +51,34 @@ build_arch() { # arm64 | x86_64
 
   echo "== LAME ($arch)"
   tar -xzf "$work/lame-$LAME_VERSION.tar.gz" -C "$dir"
-  ( cd "$dir/lame-$LAME_VERSION" &&
-    ./configure --prefix="$prefix" --host="$triple" --disable-shared --enable-static --disable-frontend --disable-decoder \
-      CC=clang CFLAGS="$cflags" LDFLAGS="-arch $arch" >/dev/null &&
-    make -j"$jobs" >/dev/null && make install >/dev/null )
+  (
+    cd "$dir/lame-$LAME_VERSION"
+    quietly "$dir/lame-configure.log" ./configure --prefix="$prefix" --host="$triple" \
+      --disable-shared --enable-static --disable-frontend --disable-decoder \
+      CC=clang CFLAGS="$cflags" LDFLAGS="-arch $arch"
+    quietly "$dir/lame-make.log" make -j"$jobs"
+    quietly "$dir/lame-install.log" make install
+  )
 
   echo "== FFmpeg ($arch)"
   tar -xJf "$work/ffmpeg-$FFMPEG_VERSION.tar.xz" -C "$dir"
   host_arch="$(uname -m)"
-  local cross=()
-  [ "$host_arch" = "$arch" ] || cross=(--enable-cross-compile --arch="$arch" --target-os=darwin)
-  ( cd "$dir/ffmpeg-$FFMPEG_VERSION" &&
-    ./configure --prefix="$prefix" "${cross[@]}" --cc="clang -arch $arch" \
+  # A plain string, not an array: expanding an empty array is an error under "set -u" in bash 3.2.
+  cross=""
+  if [ "$host_arch" != "$arch" ]; then
+    cross="--enable-cross-compile --arch=$arch --target-os=darwin"
+  fi
+  (
+    cd "$dir/ffmpeg-$FFMPEG_VERSION"
+    # $cross is meant to split into separate words.
+    # shellcheck disable=SC2086
+    quietly "$dir/ffmpeg-configure.log" ./configure --prefix="$prefix" $cross --cc="clang -arch $arch" \
       --extra-cflags="-I$prefix/include -mmacosx-version-min=$MIN_MACOS" \
       --extra-ldflags="-L$prefix/lib -arch $arch -mmacosx-version-min=$MIN_MACOS" \
       --disable-autodetect --disable-doc --disable-debug --disable-ffplay --disable-ffprobe \
-      --enable-libmp3lame --enable-audiotoolbox >/dev/null &&
-    make -j"$jobs" >/dev/null )
+      --enable-libmp3lame --enable-audiotoolbox
+    quietly "$dir/ffmpeg-make.log" make -j"$jobs"
+  )
   cp "$dir/ffmpeg-$FFMPEG_VERSION/ffmpeg" "$out/ffmpeg-$triple"
   strip -x "$out/ffmpeg-$triple"
 
