@@ -4,7 +4,9 @@
   "enforcement": "active",
   "conditions": {
     "ref_name": {
-      "include": ["~DEFAULT_BRANCH"],
+      "include": [
+        "~DEFAULT_BRANCH"
+      ],
       "exclude": []
     }
   },
@@ -16,9 +18,15 @@
     }
   ],
   "rules": [
-    { "type": "deletion" },
-    { "type": "non_fast_forward" },
-    { "type": "required_linear_history" },
+    {
+      "type": "deletion"
+    },
+    {
+      "type": "non_fast_forward"
+    },
+    {
+      "type": "required_linear_history"
+    },
     {
       "type": "pull_request",
       "parameters": {
@@ -27,7 +35,10 @@
         "require_code_owner_review": false,
         "require_last_push_approval": false,
         "required_review_thread_resolution": true,
-        "allowed_merge_methods": ["squash", "rebase"]
+        "allowed_merge_methods": [
+          "squash",
+          "rebase"
+        ]
       }
     },
     {
@@ -36,10 +47,9 @@
         "strict_required_status_checks_policy": true,
         "do_not_enforce_on_create": false,
         "required_status_checks": [
-          { "context": "Dependency policy (cargo deny)" },
-          { "context": "Test (windows-latest)" },
-          { "context": "Test (macos-latest)" },
-          { "context": "End-to-end (Windows, real app)" }
+          {
+            "context": "CI result"
+          }
         ]
       }
     }

@@ -10,7 +10,7 @@
 // RECORDING_FIXER_FOLDERS, with its own WebView2 profile, so nothing of the user's is touched.
 
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { connect, createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -168,20 +168,33 @@ before(async () => {
   const old = new Date(Date.now() - 3600_000);
   (await import('node:fs')).utimesSync(files.broken, old, old);
 
+  // Keep tauri-driver's output: when the session cannot start (it happened on CI only), this is the
+  // only trace of why.
+  const logDir = join(here, '.tools', 'logs');
+  mkdirSync(logDir, { recursive: true });
+  const driverLog = join(logDir, 'tauri-driver.log');
+  const logFd = openSync(driverLog, 'w');
   const port = await freePort();
   driverProc = spawn('tauri-driver', ['--port', String(port), '--native-driver', edgedriver], {
-    stdio: 'ignore',
+    stdio: ['ignore', logFd, logFd],
     env: {
       ...process.env,
       RECORDING_FIXER_FOLDERS: work,
       WEBVIEW2_USER_DATA_FOLDER: join(work, '.webview'),
     },
   });
-  await waitForPort(port);
-  driver = await new Builder()
-    .usingServer(`http://127.0.0.1:${port}/`)
-    .withCapabilities({ browserName: 'wry', 'tauri:options': { application: exe } })
-    .build();
+  closeSync(logFd);
+  try {
+    await waitForPort(port);
+    driver = await new Builder()
+      .usingServer(`http://127.0.0.1:${port}/`)
+      .withCapabilities({ browserName: 'wry', 'tauri:options': { application: exe } })
+      .build();
+  } catch (e) {
+    console.error(`tauri-driver output (${driverLog}):
+${readFileSync(driverLog, 'utf8') || '<empty>'}`);
+    throw e;
+  }
   await driver.manage().setTimeouts({ implicit: 0, pageLoad: 30000, script: 30000 });
   await driver.wait(async () => (await listed()) >= 3, 20000, 'the recordings to be listed');
 });
