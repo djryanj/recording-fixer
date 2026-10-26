@@ -56,16 +56,32 @@
     <p class="hint">The audio is exported exactly as recorded. Choose one of the other two to change its loudness.</p>
   {/if}
 
+  {#if preview}
+    <p class="hint">
+      The graph under the waveform shows the loudness over time (grey, a 3 second average in LUFS) and, once a mode is chosen, what it will be afterwards (amber).
+      Look for the beatmixes that stick out and the stretches that are too quiet.
+    </p>
+  {/if}
+
+  {#if preview?.measuring}
+    <div class="measuring">
+      <div class="status" role="status">
+        <progress max="100" value={percent(preview.measuring)} aria-label="Measuring loudness"></progress>
+        <span>{preview.measuring.label} {percent(preview.measuring)}%</span>
+      </div>
+      <p class="hint">
+        The first time a recording is used it is measured from start to end. The graph under the waveform fills in as it goes, and you can keep editing and playing the original meanwhile.
+        After this it is instant and remembered between sessions.
+      </p>
+    </div>
+  {/if}
+
   {#if preview && loudness.mode !== 'off'}
     <div class="preview">
       <label class="check"><input type="checkbox" bind:checked={loudness.preview} /> Hear this when playing in the editor</label>
       {#if loudness.preview}
         {#if preview.measuring}
-          <div class="status" role="status">
-            <progress max="100" value={percent(preview.measuring)} aria-label="Measuring loudness"></progress>
-            <span>{preview.measuring.label} {percent(preview.measuring)}%</span>
-          </div>
-          <p class="hint">The first time a recording is used it has to be measured from start to end. After that this is instant, and it is remembered between sessions.</p>
+          <p class="hint">Playing the original until the measurement is done, then it switches to the processed sound.</p>
         {:else if preview.error}
           <p class="err" role="status">The preview could not use this: {preview.error}</p>
         {:else if preview.info}
@@ -107,6 +123,10 @@
   }
   .preset {
     font-size: 12px;
+  }
+  .measuring {
+    display: grid;
+    gap: 6px;
   }
   .preview {
     display: grid;

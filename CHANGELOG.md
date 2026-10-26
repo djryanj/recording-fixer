@@ -18,6 +18,8 @@ First version, not yet tagged or published.
 - Audio preview through WASAPI, ASIO (Windows build option) and CoreAudio, with device and output-pair selection.
 - Export to AIFF, MP3 (CBR, VBR, ABR) and AAC through ffmpeg, with ID3 tags, filename and tag templates, and fades applied identically for every output.
 - Apple AAC encoding on Windows through the user's own `CoreAudioToolbox.dll`, with encoder delay compensated. Encoder choice is detected at startup and can be overridden.
+- A loudness graph under the waveform (as recorded, and after processing, with the target), filled in progressively while a recording is measured for the first time. Measuring a 3 hour recording takes about 12 seconds (it took minutes in development builds before the audio crates were optimised there).
+- Fades have their own tab in the editor, with quick presets, and a section in Settings.
 - Hear the loudness processing in the editor preview (its own Loudness tab), with seeking, trimming and reordering all heard processed; the first measurement of a recording shows progress and is remembered.
 - Waveforms now appear as they are built, with a visible progress mark, instead of after the whole file has been read.
 - Loudness maximizer on export: match a target loudness (LUFS) or raise to a peak limit, with a leveller that follows the whole set (beatmixes down, quiet tracks up, breakdowns kept) and a true-peak lookahead limiter. Keeps the recording's bit depth, dithers 16-bit. Off by default. See [docs/MAXIMIZER.md](docs/MAXIMIZER.md).

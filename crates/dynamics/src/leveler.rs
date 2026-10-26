@@ -130,6 +130,13 @@ impl GainCurve {
         }
     }
 
+    /// The gain at one frame, in dB.
+    pub fn db_at(&self, frame: u64) -> f32 {
+        let mut g = [1.0f32];
+        self.fill(frame, &mut g);
+        20.0 * g[0].log10()
+    }
+
     pub fn max_db(&self) -> f64 {
         20.0 * f64::from(self.gain.iter().copied().fold(f32::MIN_POSITIVE, f32::max)).log10()
     }

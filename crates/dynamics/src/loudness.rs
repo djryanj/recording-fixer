@@ -256,6 +256,30 @@ impl Profile {
         at(0.95) - at(0.10)
     }
 
+    /// Short-term loudness (LUFS) as `width` columns across frames `[start, end)`, for drawing a graph.
+    /// A column covering several steps averages their energy. Silence is reported as -100.
+    pub fn short_term_columns(&self, start: u64, end: u64, width: usize) -> Vec<f32> {
+        let n = self.hops();
+        let end = end.min(self.frames);
+        if n == 0 || width == 0 || start >= end {
+            return Vec::new();
+        }
+        let h = self.hop_frames as u64;
+        let span = end - start;
+        let step = |i: usize| -> f64 { energy(self.short_term(i).max(-100.0)) };
+        (0..width)
+            .map(|x| {
+                let a = start + (span as u128 * x as u128 / width as u128) as u64;
+                let b =
+                    (start + (span as u128 * (x as u128 + 1) / width as u128) as u64).max(a + 1);
+                let first = ((a / h) as usize).min(n - 1);
+                let last = (((b - 1) / h) as usize).clamp(first, n - 1);
+                let mean = (first..=last).map(step).sum::<f64>() / (last - first + 1) as f64;
+                lufs(mean).max(-100.0) as f32
+            })
+            .collect()
+    }
+
     /// Highest true peak in the programme, linear.
     pub fn peak_max(&self) -> f32 {
         self.peak.iter().copied().fold(0.0, f32::max)
@@ -326,6 +350,16 @@ impl Analyzer {
         self.acc_low = 0.0;
         self.acc_full = 0.0;
         self.hop_peak = 0.0;
+    }
+
+    /// Steps completed so far.
+    pub fn closed_hops(&self) -> usize {
+        self.k_ms.len()
+    }
+
+    /// Energies and peaks of the completed steps from `from` on, for showing a measurement while it runs.
+    pub fn hops_since(&self, from: usize) -> (&[f64], &[f32]) {
+        (&self.k_ms[from..], &self.peak[from..])
     }
 
     pub fn push(&mut self, interleaved: &[f32]) {
@@ -473,6 +507,47 @@ mod tests {
         let p = analyse(rate, &sine(rate, -20.0, 1.55));
         assert_eq!(p.hops(), 16);
         assert_eq!(p.frames, (rate * 1.55) as u64);
+    }
+
+    #[test]
+    fn steps_can_be_read_while_the_measurement_is_still_running() {
+        let rate = 44_100.0;
+        let samples = sine(rate, -20.0, 3.0);
+        let mut a = Analyzer::new(rate, 2, false);
+        let (mut seen_k, mut seen_p) = (Vec::new(), Vec::new());
+        for chunk in samples.chunks(2 * 5000) {
+            a.push(chunk);
+            let (k, p) = a.hops_since(seen_k.len());
+            seen_k.extend_from_slice(k);
+            seen_p.extend_from_slice(p);
+        }
+        let done = a.closed_hops();
+        let p = a.finish();
+        assert!(done >= 29 && done <= p.hops());
+        assert_eq!(seen_k[..], p.k_ms[..done]);
+        assert_eq!(seen_p[..], p.peak[..done]);
+    }
+
+    #[test]
+    fn graph_columns_follow_the_level_and_cover_the_range() {
+        let rate = 44_100.0;
+        let mut s = sine(rate, -30.0, 20.0);
+        s.extend(sine(rate, -20.0, 20.0));
+        let p = analyse(rate, &s);
+        let cols = p.short_term_columns(0, p.frames, 40);
+        assert_eq!(cols.len(), 40);
+        assert!(
+            (f64::from(cols[5]) + 30.0).abs() < 0.2 && (f64::from(cols[34]) + 20.0).abs() < 0.2,
+            "{cols:?}"
+        );
+        // Zoomed in far past one step, it still answers (one column per step is the finest there is).
+        assert_eq!(p.short_term_columns(10_000, 10_100, 8).len(), 8);
+        assert!(
+            p.short_term_columns(5, 5, 8).is_empty() && p.short_term_columns(0, 100, 0).is_empty()
+        );
+        // Silence reads as a floor, not -inf.
+        let q = analyse(rate, &vec![0.0; 2 * 44_100 * 5]);
+        assert_eq!(q.short_term_columns(0, q.frames, 4), vec![-100.0; 4]);
     }
 
     #[test]

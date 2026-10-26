@@ -36,6 +36,14 @@ How it works: each recording is measured once, in full (about 17 s for 3 hours, 
 
 The preview is within about half a LU of the export: the export makes one more check pass (the rehearsal) that the preview skips. Playback does not include fades, as before.
 
+### The loudness graph
+
+Open the editor's **Loudness** tab and a lane appears under the waveform showing the loudness over time (grey: a 3 second average in LUFS, per recording) and, once a mode is chosen, what it will be after processing (amber), with the target as a dashed line. It makes the beatmixes that stick out, and the stretches that are too quiet, visible before listening, and shows the effect of every setting as you change it.
+
+The graph does not wait for the measurement: the first time a recording is used it is measured from start to end, and the graph fills in from the left as it goes (the unmeasured part is dimmed, with a marker at the frontier and "measuring loudness N%"). The Loudness tab shows a progress bar too. Meanwhile the original plays, so you can keep working; when the measurement ends the preview switches to the processed sound by itself. On later visits there is nothing to wait for.
+
+How long the measurement takes: **12 s for Serato Recording 1 (3 hours, 870x realtime)** in a development build, and the first graph data arrives after 3 ms. Before the workspace optimised the audio crates in development builds this was about 5 minutes (37x realtime), which is what `cargo tauri dev` users saw; a test (`tests/speed.rs`) keeps it from regressing and an opt-in one measures the real recording (`cargo test -p dynamics --test real_samples -- --ignored --nocapture`).
+
 ### Settings (Export window and Settings > Default export)
 
 | Choice | Meaning |

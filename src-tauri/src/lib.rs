@@ -82,6 +82,33 @@ impl PeaksStore {
 struct LoudnessStore {
     profiles: Mutex<Vec<(String, Arc<Profile>)>>,
     build: Mutex<()>,
+    /// Measurements in progress, so the loudness graph can grow while they run.
+    partial: Mutex<Vec<(String, PartialProfile)>>,
+}
+
+/// The steps a loudness measurement has completed so far.
+struct PartialSteps {
+    rate: f64,
+    channels: usize,
+    hop_frames: usize,
+    k_ms: Vec<f64>,
+    peak: Vec<f32>,
+}
+
+type PartialProfile = Arc<Mutex<PartialSteps>>;
+
+impl PartialSteps {
+    fn as_profile(&self) -> Profile {
+        let frames = (self.k_ms.len() * self.hop_frames) as u64;
+        Profile::from_parts(
+            self.rate,
+            self.channels,
+            self.hop_frames,
+            frames,
+            self.k_ms.clone(),
+            self.peak.clone(),
+        )
+    }
 }
 
 const PROFILES_IN_MEMORY: usize = 16;
@@ -937,18 +964,46 @@ fn profile_for(app: &AppHandle, store: &LoudnessStore, path: &str) -> Result<Arc
             let mut f = std::fs::File::open(file).map_err(|e| e.to_string())?;
             std::io::Seek::seek(&mut f, std::io::SeekFrom::Start(d.audio_start))
                 .map_err(|e| e.to_string())?;
-            let mut throttle =
-                Throttle::new(app, format!("Measuring loudness of {}", file_label(path)));
-            let p = maximizer::measure(
+            let part: PartialProfile = Arc::new(Mutex::new(PartialSteps {
+                rate: fmt.rate,
+                channels: usize::from(fmt.channels),
+                hop_frames: (fmt.rate / 10.0).round() as usize,
+                k_ms: Vec::new(),
+                peak: Vec::new(),
+            }));
+            if let Ok(mut all) = store.partial.lock() {
+                all.push((mem_key.clone(), part.clone()));
+            }
+            let mut last = Instant::now() - Duration::from_secs(1);
+            let measured = maximizer::measure_with(
                 std::io::BufReader::with_capacity(1 << 20, f),
                 fmt,
                 d.frames,
                 &mut |_, done, total| {
-                    throttle.emit(done, total);
+                    if done >= total || last.elapsed() >= Duration::from_millis(150) {
+                        last = Instant::now();
+                        let _ = app.emit(
+                            "loudness-progress",
+                            PeaksProgress {
+                                path: path.to_string(),
+                                done,
+                                total,
+                            },
+                        );
+                    }
                     true
                 },
-            )
-            .map_err(|e| e.to_string())?;
+                &mut |k, peaks| {
+                    if let Ok(mut s) = part.lock() {
+                        s.k_ms.extend_from_slice(k);
+                        s.peak.extend_from_slice(peaks);
+                    }
+                },
+            );
+            if let Ok(mut all) = store.partial.lock() {
+                all.retain(|(k, _)| *k != mem_key);
+            }
+            let p = measured.map_err(|e| e.to_string())?;
             if std::fs::create_dir_all(&dir).is_ok()
                 && std::fs::write(&on_disk, p.to_bytes()).is_ok()
             {
@@ -974,6 +1029,8 @@ struct PreviewInfo {
     static_gain_db: f64,
     gain_min_db: f64,
     gain_max_db: f64,
+    /// The planned gain at the start of each second of the edit list, for the graph.
+    gain_db: Vec<f32>,
 }
 
 /// Plan the loudness processing for an edit list from the cached profiles of its recordings.
@@ -1017,6 +1074,9 @@ fn preview_processing(
         static_gain_db: curve.static_db,
         gain_min_db: curve.min_db(),
         gain_max_db: curve.max_db(),
+        gain_db: (0..=(stitched.frames as f64 / stitched.rate).ceil() as u64)
+            .map(|s| curve.db_at((s as f64 * stitched.rate) as u64))
+            .collect(),
     };
     Ok((
         Processing {
@@ -1025,6 +1085,87 @@ fn preview_processing(
         },
         info,
     ))
+}
+
+/// Measure the recordings (the first time only), so the loudness graph and preview can use them.
+/// Returns when every one is measured; progress arrives as `loudness-progress` events meanwhile.
+#[tauri::command]
+async fn ensure_loudness(
+    app: AppHandle,
+    store: State<'_, Arc<LoudnessStore>>,
+    paths: Vec<String>,
+) -> Result<(), String> {
+    let store = store.inner().clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        for path in &paths {
+            profile_for(&app, &store, path)?;
+        }
+        Ok::<_, String>(())
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    logged("measuring loudness", result)
+}
+
+/// Short-term loudness (LUFS, little-endian f32) as `width` columns across frames `[start, end)` of a
+/// recording, for the graph. Answers from a measurement still in progress (never past what it has
+/// covered), from the finished profile, or with nothing at all if the recording is not measured yet.
+#[tauri::command]
+async fn get_loudness(
+    app: AppHandle,
+    store: State<'_, Arc<LoudnessStore>>,
+    path: String,
+    start: u64,
+    end: u64,
+    width: usize,
+) -> Result<tauri::ipc::Response, String> {
+    let store = store.inner().clone();
+    let width = width.min(8192);
+    tauri::async_runtime::spawn_blocking(move || {
+        let columns = |p: &Profile, end: u64| -> Vec<u8> {
+            p.short_term_columns(start, end, width)
+                .into_iter()
+                .flat_map(f32::to_le_bytes)
+                .collect()
+        };
+        let Ok(key) = cache::Key::for_file(Path::new(&path)) else {
+            return Ok(tauri::ipc::Response::new(Vec::new()));
+        };
+        let mem_key = format!("{}|{}|{}", key.path, key.size, key.modified_ms);
+        let finished = store.profiles.lock().ok().and_then(|r| {
+            r.iter()
+                .find(|(k, _)| *k == mem_key)
+                .map(|(_, p)| p.clone())
+        });
+        if let Some(p) = finished {
+            return Ok(tauri::ipc::Response::new(columns(&p, end)));
+        }
+        let part = store.partial.lock().ok().and_then(|all| {
+            all.iter()
+                .find(|(k, _)| *k == mem_key)
+                .map(|(_, p)| p.clone())
+        });
+        if let Some(part) = part {
+            let p = part.lock().map_err(|e| e.to_string())?.as_profile();
+            return Ok(tauri::ipc::Response::new(columns(&p, end.min(p.frames))));
+        }
+        // Measured in an earlier session? Use the cached file, but never start a measurement here.
+        let on_disk = app
+            .path()
+            .app_cache_dir()
+            .map_err(|e| e.to_string())?
+            .join("loudness");
+        let file = cache::path_for(&on_disk, &key).with_extension("lp");
+        match std::fs::read(file)
+            .ok()
+            .and_then(|b| Profile::from_bytes(&b))
+        {
+            Some(p) => Ok(tauri::ipc::Response::new(columns(&p, end))),
+            None => Ok(tauri::ipc::Response::new(Vec::new())),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[derive(Serialize)]
@@ -1221,6 +1362,8 @@ pub fn run() {
             log_location,
             read_log,
             log_ui,
+            ensure_loudness,
+            get_loudness,
             check_for_update
         ])
         .run(tauri::generate_context!())

@@ -25,8 +25,9 @@
   import { onDestroy, untrack } from 'svelte';
   import { api, emptyMetadata, type FileEntry, type PlanInfo, type PreviewInfo, type Progress, type ToolStatus } from './api';
   import { audio } from './audio.svelte';
-  import { buildLoudness, buildTarget, clampFade, defaultFormat, qualityLabel, sanitizeFormat, sanitizeLoudness, type FormatState, type LoudnessState } from './exportOptions';
+  import { buildLoudness, buildTarget, clampFade, clampLufs, defaultFormat, qualityLabel, sanitizeFormat, sanitizeLoudness, type FormatState, type LoudnessState } from './exportOptions';
   import { loadSavedExport, patchSavedExport } from './exportSettings';
+  import FadesPanel from './FadesPanel.svelte';
   import FormatPanel from './FormatPanel.svelte';
   import LoudnessPanel from './LoudnessPanel.svelte';
   import { formatDuration, formatPrecise, parseTime } from './format';
@@ -65,7 +66,7 @@
   let pxPerSec = $state(1);
   let timeline = $state<ReturnType<typeof Timeline>>();
   let mode = $state<'combine' | 'separate'>('combine');
-  let tab = $state<'format' | 'loudness' | 'tags'>('format');
+  let tab = $state<'format' | 'loudness' | 'fades' | 'tags'>('format');
   // svelte-ignore state_referenced_locally
   let format = $state<FormatState>(sanitizeFormat({ ...defaultFormat(tool), ...saved.format }, tool));
   // svelte-ignore state_referenced_locally
@@ -102,37 +103,81 @@
   let loudInfo = $state<PreviewInfo | null>(null);
   let loudError = $state<string | null>(null);
 
+  /** Bumped whenever the recordings' loudness becomes available, so the graph fetches it. */
+  let loudVersion = $state(0);
+  const paths = $derived([...new Set(clips.map((c) => c.path))]);
+  const pathsKey = $derived(JSON.stringify(paths));
+  const wantLoudness = $derived(tab === 'loudness' || previewJobKey !== 'null');
+  // What the timeline's loudness graph shows: nothing, the recordings as they are, or also the planned result.
+  const loudnessLane = $derived(
+    wantLoudness
+      ? { gainDb: loudInfo ? loudInfo.gain_db : null, target: loudInfo && loudness.mode === 'lufs' ? clampLufs(loudness.lufs) : null, version: loudVersion }
+      : null,
+  );
+  const nameOf = (path: string) => path.split(/[\\/]/).pop() ?? path;
+
   // The first time a recording is used it is measured in full; show how far that has got.
   $effect(() => {
     let off = () => {};
     let gone = false;
-    void api.onProgress((p) => {
-      if (p.label.startsWith('Measuring loudness')) measuring = p;
-    }).then((un) => (gone ? un() : (off = un)));
+    void api
+      .onLoudnessProgress((p) => {
+        measuring = p.done >= p.total ? null : { label: `Measuring loudness of ${nameOf(p.path)}`, done: p.done, total: p.total };
+      })
+      .then((un) => (gone ? un() : (off = un)));
     return () => {
       gone = true;
       off();
     };
   });
 
+  // Measure the recordings when the graph or the processed preview needs them.
+  $effect(() => {
+    if (!wantLoudness) return;
+    const list: string[] = JSON.parse(pathsKey);
+    let cancelled = false;
+    api.ensureLoudness(list).then(
+      () => !cancelled && loudVersion++,
+      () => {},
+    );
+    return () => (cancelled = true);
+  });
+
   // Keep the playback engine in step with the edit list (debounced: trim drags change it constantly).
   $effect(() => {
     const payload = clips.map(toBackend);
     const job = JSON.parse(previewJobKey);
+    const list: string[] = JSON.parse(pathsKey);
+    let cancelled = false;
+    const now = () => untrack(() => Math.min(playhead, totalSecs(clips)));
     const timer = setTimeout(async () => {
       loudError = null;
-      if (job) measuring = { label: 'Measuring loudness', done: 0, total: 1 };
       try {
-        const info = await audio.load(payload, untrack(() => Math.min(playhead, totalSecs(clips))), EDITOR_LABEL, job);
+        if (job) {
+          // Already measured: straight to the processed sound. Otherwise play the original at once
+          // and switch when the measurement finishes (the graph fills in meanwhile).
+          const measured = api.ensureLoudness(list);
+          const quick = await Promise.race([measured.then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), 120))]);
+          if (cancelled) return;
+          if (!quick) {
+            await audio.load(payload, now(), EDITOR_LABEL, null).catch(() => {});
+            await measured;
+            if (cancelled) return;
+          }
+        }
+        const info = await audio.load(payload, now(), EDITOR_LABEL, job);
+        if (cancelled) return;
         loudInfo = job ? (info.loudness ?? null) : null;
       } catch (e) {
+        if (cancelled) return;
         loudInfo = null;
         if (job) loudError = String(e);
-      } finally {
-        measuring = null;
       }
     }, 150);
-    return () => clearTimeout(timer);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   });
 
   onDestroy(() => {
@@ -357,6 +402,7 @@
       playing={audio.state.playing && engineHasThis}
       {fadeInSecs}
       {fadeOutSecs}
+      loudness={loudnessLane}
       bind:pxPerSec
       bind:this={timeline}
       onselect={(id) => (selectedId = id)}
@@ -440,11 +486,14 @@
       <div class="tabs" role="tablist">
         <button role="tab" aria-selected={tab === 'format'} class:active={tab === 'format'} onclick={() => (tab = 'format')}>Format &amp; quality</button>
         <button role="tab" aria-selected={tab === 'loudness'} class:active={tab === 'loudness'} onclick={() => (tab = 'loudness')}>Loudness{#if loudness.mode !== 'off'} <i class="led ok" title="On"></i>{/if}</button>
+        <button role="tab" aria-selected={tab === 'fades'} class:active={tab === 'fades'} onclick={() => (tab = 'fades')}>Fades{#if fadeInSecs > 0 || fadeOutSecs > 0} <i class="led ok" title="On"></i>{/if}</button>
         <button role="tab" aria-selected={tab === 'tags'} class:active={tab === 'tags'} onclick={() => (tab = 'tags')}>Name, folder &amp; tags</button>
       </div>
       <div class="tabpanel">
         {#if tab === 'format'}
-          <FormatPanel bind:format bind:fadeIn bind:fadeOut {tool} durationSecs={total} aiffBytes={plan?.bytes ?? null} {onlocate} />
+          <FormatPanel bind:format {tool} durationSecs={total} aiffBytes={plan?.bytes ?? null} {onlocate} />
+        {:else if tab === 'fades'}
+          <FadesPanel bind:fadeIn bind:fadeOut />
         {:else if tab === 'loudness'}
           <LoudnessPanel bind:loudness preview={{ measuring, info: loudInfo, error: loudError }} />
         {:else}

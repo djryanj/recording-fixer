@@ -137,9 +137,27 @@ pub fn measure(
     total_frames: u64,
     progress: Progress,
 ) -> Result<Profile, Error> {
+    measure_with(reader, fmt, total_frames, progress, &mut |_, _| {})
+}
+
+/// [`measure`], also handing over each batch of newly completed 100 ms steps (energies, then peaks) as
+/// soon as they exist, so a graph can grow while the pass is still running.
+pub fn measure_with(
+    reader: impl Read,
+    fmt: PcmFormat,
+    total_frames: u64,
+    progress: Progress,
+    on_steps: &mut dyn FnMut(&[f64], &[f32]),
+) -> Result<Profile, Error> {
     let mut an = Analyzer::new(fmt.rate, usize::from(fmt.channels), false);
+    let mut sent = 0;
     read_chunks(reader, fmt, total_frames, Phase::Measuring, progress, |s| {
-        an.push(s)
+        an.push(s);
+        if an.closed_hops() > sent {
+            let (k, p) = an.hops_since(sent);
+            on_steps(k, p);
+            sent = an.closed_hops();
+        }
     })?;
     Ok(an.finish())
 }

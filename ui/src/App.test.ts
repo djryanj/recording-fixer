@@ -3,9 +3,19 @@ import { render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const h = vi.hoisted(() => ({ invoke: vi.fn(), open: vi.fn() }));
+const h = vi.hoisted(() => ({
+  invoke: vi.fn(),
+  open: vi.fn(),
+  /** Handlers the app registered for backend events, by name. */
+  events: {} as Record<string, (e: { payload: unknown }) => void>,
+}));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: h.invoke }));
-vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn(async (name: string, cb: (e: { payload: unknown }) => void) => {
+    h.events[name] = cb;
+    return () => {};
+  }),
+}));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: h.open, save: vi.fn() }));
 
 import App from './App.svelte';
@@ -205,8 +215,10 @@ describe('exporting from the list', () => {
     await u.click(within(rowFor('Serato Recording 2.aif')).getByRole('checkbox'));
     await u.click(screen.getByRole('button', { name: 'Edit & export…' }));
     const editor = await screen.findByRole('dialog', { name: 'Editor' });
+    await u.click(within(editor).getByRole('tab', { name: /Fades/ }));
     await u.type(within(editor).getByLabelText('Fade in (seconds)'), '2');
     await u.type(within(editor).getByLabelText('Fade out (seconds)'), '5');
+    await u.click(within(editor).getByRole('tab', { name: /Format/ }));
     await u.click(within(editor).getByRole('radio', { name: /MP3/ }));
     await u.click(within(editor).getByRole('button', { name: 'Export' }));
     await waitFor(() => expect(backend.of('export_audio')).toHaveLength(1));
@@ -442,6 +454,7 @@ describe('Settings (export defaults and ffmpeg)', () => {
     const editor = await screen.findByRole('dialog', { name: 'Editor' });
     expect(within(editor).getByRole('radio', { name: /MP3/ })).toBeChecked();
     expect(within(editor).getByLabelText('Quality')).toHaveValue('0');
+    await u.click(within(editor).getByRole('tab', { name: /Fades/ }));
     expect(within(editor).getByLabelText('Fade in (seconds)')).toHaveValue(2);
   });
 
@@ -757,22 +770,42 @@ describe('loudness maximizer', () => {
     expect(sentJob().loudness).toMatchObject({ mode: 'lufs' });
   });
 
-  it('shows how far the first measurement has got', async () => {
+  it('shows how far the first measurement has got, and plays the original until it is done', async () => {
     const u = user();
     await mount();
     const editor = await openEditor(u);
     const group = await loudnessTab(u, editor);
-    // Hold the reload open, as the first measurement of a long recording does.
+    // Hold the measurement open, as the first look at a long recording does.
     const real = h.invoke.getMockImplementation()!;
     let finish!: () => void;
     h.invoke.mockImplementation((cmd: string, args: Record<string, unknown>) =>
-      cmd === 'audio_load' && args.loudness ? new Promise((r) => (finish = () => r(real(cmd, args)))) : real(cmd, args),
+      cmd === 'ensure_loudness' ? new Promise((r) => (finish = () => r(null))) : real(cmd, args),
     );
     await u.click(within(group).getByRole('radio', { name: 'Match a loudness' }));
-    expect(await within(group).findByRole('progressbar', { name: 'Measuring loudness' })).toBeInTheDocument();
+    const path = 'C:/rec/Serato Recording 2.aif';
+    h.events['loudness-progress']({ payload: { path, done: 25, total: 100 } });
+    const bar = await within(group).findByRole('progressbar', { name: 'Measuring loudness' });
+    expect(bar).toHaveValue(25);
+    expect(group).toHaveTextContent('Measuring loudness of Serato Recording 2.aif 25%');
+    // Meanwhile the original is playing: the processed sound is loaded only once the measurement ends.
+    await waitFor(() => expect(loadsWith().at(-1)).toBeNull());
+    expect(loadsWith().filter((l) => l !== null)).toHaveLength(0);
+    h.events['loudness-progress']({ payload: { path, done: 100, total: 100 } });
     finish();
     await within(group).findByText(/Playing with it on/);
     expect(within(group).queryByRole('progressbar')).toBeNull();
+    expect(loadsWith().at(-1)).toMatchObject({ mode: 'lufs' });
+  });
+
+  it('asks for the recordings to be measured when the Loudness tab is open, even with it switched off, so the graph can show', async () => {
+    const u = user();
+    await mount();
+    const editor = await openEditor(u);
+    expect(backend.of('ensure_loudness')).toHaveLength(0); // not needed until the tab is looked at
+    await loudnessTab(u, editor);
+    await waitFor(() => expect(backend.of('ensure_loudness').at(-1)).toEqual({ paths: ['C:/rec/Serato Recording 2.aif'] }));
+    // And the graph asks for the data.
+    await waitFor(() => expect(backend.of('get_loudness').length).toBeGreaterThan(0));
   });
 
   it('says so when the preview cannot use the setting', async () => {

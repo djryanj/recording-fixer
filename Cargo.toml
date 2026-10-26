@@ -20,3 +20,19 @@ dynamics = { path = "crates/dynamics" }
 lto = "thin"
 codegen-units = 1
 strip = true
+
+# The audio crates do per-sample work over hours of audio; unoptimised, measuring the loudness of a
+# 3 h recording took 5 minutes in a development build (13 s optimised). Keep them fast in dev builds
+# and tests, and leave the rest (tauri and friends) quick to compile.
+[profile.dev.package.aiff-core]
+opt-level = 3
+[profile.dev.package.dynamics]
+opt-level = 3
+[profile.dev.package.edit-core]
+opt-level = 3
+[profile.dev.package.peaks]
+opt-level = 3
+[profile.dev.package.playback]
+opt-level = 3
+[profile.dev.package.rubato]
+opt-level = 3

@@ -6,6 +6,7 @@
   import { checkForUpdate, setUpdateChecks, updateChecksEnabled } from './updates';
   import { clampFade, defaultFormat, encoderLabel, sanitizeFormat, sanitizeLoudness, type FormatState, type LoudnessState } from './exportOptions';
   import { loadSavedExport, patchSavedExport } from './exportSettings';
+  import FadesPanel from './FadesPanel.svelte';
   import FormatPanel from './FormatPanel.svelte';
   import LoudnessPanel from './LoudnessPanel.svelte';
 
@@ -91,7 +92,12 @@
     <section aria-label="Default export">
       <h3 class="label">Default export</h3>
       <p class="why">What a new export starts with. You can still change it for any one export in the editor, which then remembers what you used last.</p>
-      <FormatPanel bind:format bind:fadeIn bind:fadeOut {tool} durationSecs={null} aiffBytes={null} onlocate={onchoose} />
+      <FormatPanel bind:format {tool} durationSecs={null} aiffBytes={null} onlocate={onchoose} />
+    </section>
+
+    <section aria-label="Default fades">
+      <h3 class="label">Default fades</h3>
+      <FadesPanel bind:fadeIn bind:fadeOut />
     </section>
 
     <section aria-label="Default loudness">

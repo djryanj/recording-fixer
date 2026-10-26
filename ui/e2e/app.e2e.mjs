@@ -422,6 +422,7 @@ describe('the real app', () => {
     await tickRow('Good Two.aif');
     await clickXp(XP.button('Edit & export…'));
     await find("//div[@aria-label='Editor']");
+    await clickXp("//div[@aria-label='Editor']//button[@role='tab'][contains(.,'Fades')]");
     await (await find("//input[@aria-label='Fade in (seconds)']")).sendKeys('1');
     await (await find("//input[@aria-label='Fade out (seconds)']")).sendKeys('1');
     const before = new Set(dirFiles());
@@ -493,6 +494,9 @@ describe('the real app', () => {
     await find("//div[@aria-label='Editor']");
     await clickXp("//div[@aria-label='Editor']//label[.//b[normalize-space()='AIFF']]/input"); // the MP3 test left MP3 selected
     await clickXp("//div[@aria-label='Editor']//button[@role='tab'][contains(.,'Loudness')]");
+    // The loudness graph appears under the waveform (the timeline gets taller) and measures the recording.
+    const timeline = await find("//canvas[@data-testid='timeline']");
+    await driver.wait(async () => /height:\s*272px/.test((await timeline.getAttribute('style')) ?? ''), 10000, 'the loudness lane to appear');
     await clickXp("//div[@aria-label='Editor']//label[contains(.,'Match a loudness')]/input");
     const target = await find("//input[@id='lufs']");
     await target.clear();

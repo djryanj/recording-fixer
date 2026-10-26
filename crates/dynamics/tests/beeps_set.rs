@@ -5,7 +5,7 @@
 use aiff_core::diagnose_path;
 use dynamics::leveler::Leveling;
 use dynamics::loudness::Analyzer;
-use dynamics::maximizer::{prepare, Error, Maximizer, Mode, Params, Report};
+use dynamics::maximizer::{measure, measure_with, prepare, Error, Maximizer, Mode, Params, Report};
 use dynamics::pcm::{decode, PcmFormat};
 use dynamics::synth::{beeps_set, to_pcm16, RATE, SECTIONS};
 use std::io::Read;
@@ -281,4 +281,25 @@ fn reading_in_odd_sized_pieces_gives_the_same_audio() {
         pieces.extend_from_slice(&buf[..n]);
     }
     assert!(whole == pieces);
+}
+
+#[test]
+fn a_measurement_hands_over_its_steps_as_it_goes() {
+    let (fmt, pcm) = load();
+    let frames = (pcm.len() / 4) as u64;
+    let (mut k, mut peaks, mut batches) = (Vec::new(), Vec::new(), 0);
+    let p = measure_with(&pcm[..], fmt, frames, &mut |_, _, _| true, &mut |ks, ps| {
+        batches += 1;
+        k.extend_from_slice(ks);
+        peaks.extend_from_slice(ps);
+    })
+    .unwrap();
+    assert!(
+        batches > 3,
+        "steps should arrive during the pass, not once at the end ({batches})"
+    );
+    assert!(k.len() >= p.hops() - 1 && k == p.k_ms[..k.len()] && peaks == p.peak[..k.len()]);
+    // The same numbers as the plain measurement.
+    let plain = measure(&pcm[..], fmt, frames, &mut |_, _, _| true).unwrap();
+    assert_eq!(plain.k_ms, p.k_ms);
 }

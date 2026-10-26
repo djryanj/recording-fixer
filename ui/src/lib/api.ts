@@ -160,6 +160,8 @@ export interface PreviewInfo {
   static_gain_db: number;
   gain_min_db: number;
   gain_max_db: number;
+  /** The planned gain at the start of each second of the edit list, for the graph. */
+  gain_db: number[];
 }
 
 export interface PeaksProgress {
@@ -223,8 +225,13 @@ export const api = {
   logLocation: () => invoke<string>('log_location'),
   readLog: () => invoke<string>('read_log'),
   logUi: (level: 'error' | 'warn' | 'info', message: string) => invoke<void>('log_ui', { level, message }),
+  /** Measure the recordings' loudness (first time only); resolves when all are done. */
+  ensureLoudness: (paths: string[]) => invoke<void>('ensure_loudness', { paths }),
+  /** Short-term loudness in LUFS as `width` columns across frames [start, end) of one recording. Empty if not measured yet. */
+  getLoudness: async (path: string, start: number, end: number, width: number) => new Float32Array(await invoke<ArrayBuffer>('get_loudness', { path, start, end, width })),
   cancelJob: () => invoke<void>('cancel_job'),
   reveal: (path: string) => invoke<void>('reveal_in_folder', { path }),
+  onLoudnessProgress: (fn: (p: PeaksProgress) => void) => listen<PeaksProgress>('loudness-progress', (e) => fn(e.payload)),
   onPeaksProgress: (fn: (p: PeaksProgress) => void) => listen<PeaksProgress>('peaks-progress', (e) => fn(e.payload)),
   onProgress: (fn: (p: Progress) => void) => listen<Progress>('job-progress', (e) => fn(e.payload)),
 };

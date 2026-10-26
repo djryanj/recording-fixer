@@ -73,6 +73,8 @@ cargo run --release -p dynamics --example maximize -- "Serato Recording 1.aif" o
 | Rehearse (whole chain, output discarded), once or twice | about 17 s each | |
 | Process and write | 39 s | about 275x |
 
+Measuring Serato Recording 1 (3 h) as the app does it (`cargo test -p dynamics --test real_samples -- --ignored --nocapture`): 12.4 s in a development build (874x realtime), first graph data after 3 ms. Without the `[profile.dev.package.*] opt-level = 3` overrides in the root Cargo.toml the same code ran at 37x realtime in development builds (about 5 minutes), so keep those overrides for the audio crates (`dynamics`, `peaks`, `playback`, `edit-core`, `aiff-core`, `rubato`).
+
 Peak working set 15.6 MB, independent of length. Time grows linearly with the total length of the set. See [MAXIMIZER.md](MAXIMIZER.md).
 
 ## To do

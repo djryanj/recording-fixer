@@ -171,7 +171,7 @@ export function installBackend(invoke: Mock, cfg: BackendConfig = {}): Backend {
           rate: 44100,
           channels: 2,
           bits: 16,
-          loudness: args.loudness ? { input_lufs: -19.6, static_gain_db: 5.6, gain_min_db: 3.4, gain_max_db: 9.0 } : null,
+          loudness: args.loudness ? { input_lufs: -19.6, static_gain_db: 5.6, gain_min_db: 3.4, gain_max_db: 9.0, gain_db: Array.from({ length: 11 }, (_, i) => 5 + (i % 4)) } : null,
         };
       }
       case 'audio_play':
@@ -188,6 +188,15 @@ export function installBackend(invoke: Mock, cfg: BackendConfig = {}): Backend {
         return null;
       case 'audio_state':
         return { ...P() };
+      case 'ensure_loudness':
+        return null;
+      case 'get_loudness': {
+        // A step in the middle, so a test can see the graph follow the data.
+        const n = args.width as number;
+        const out = new Float32Array(n);
+        for (let i = 0; i < n; i++) out[i] = i < n / 2 ? -24 : -18;
+        return out.buffer;
+      }
       case 'cancel_job':
       case 'reveal_in_folder':
         return null;
