@@ -66,6 +66,7 @@ Audio starts after the `SSND` header, at byte 54 when offset and blockSize are 0
 ## Commands
 
 - The app version comes from `[workspace.package] version` in the root `Cargo.toml` (shown in the status bar and Settings > About via the app plugin; `tauri.conf.json` deliberately has no version). The GitHub URL lives in `ui/src/lib/about.ts` and the root `Cargo.toml`; the owner/repo in it was a guess, so correct it if the repository lives elsewhere.
+- Releases: `just prepare-release X.Y.Z[-rc.N]` (branch + version bump via `scripts/release.mjs`, changelog closed only for final releases) then PR, merge, `just tag-release X.Y.Z`. The tag push is meant to trigger a release workflow, which does not exist yet.
 - Shortcuts live in the `justfile` (`just check`, `just test`, `just e2e`, `just ci`, ...); `just` is a documented developer prerequisite (README "Install just"). Keep the README table and the justfile in step.
 - `cargo test --workspace` runs the Rust tests (ffmpeg tests skip if ffmpeg is absent)
 - `cargo test --workspace -- --ignored` runs tests needing the full sample files in the repo root

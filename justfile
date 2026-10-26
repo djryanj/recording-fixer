@@ -31,10 +31,11 @@ check:
 fmt:
     cargo fmt --all
 
-# Rust and UI unit/component tests
+# Rust and UI unit/component tests, and the release script's
 test:
     cargo test --workspace {{ features }}
     npm --prefix ui test
+    node --test "scripts/*.test.mjs"
 
 # Also run the tests that need the real sample files in the repo root
 test-samples:
@@ -59,6 +60,15 @@ release:
 # Installers (NSIS/MSI on Windows, .dmg on macOS)
 build:
     {{ tauri }} build {{ if os() == "macos" { "-- --no-default-features" } else { "" } }}
+
+# Start a release: a release/vVERSION branch from a clean main with the versions bumped (and, for a
+# final release, the changelog closed out), pushed. Then open a PR. e.g. just prepare-release 0.1.0-rc.1
+prepare-release version:
+    node scripts/release.mjs prepare {{ version }}
+
+# After that PR is merged: tag main as vVERSION and push the tag. This is the last step.
+tag-release version:
+    node scripts/release.mjs tag {{ version }}
 
 # Everything CI runs on this machine
 ci: check test e2e
