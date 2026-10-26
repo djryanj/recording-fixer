@@ -28,6 +28,19 @@ foreach ($p in (Descendants $app.Id | Where-Object { $_.Name -eq 'msedgewebview2
   Say "browser process args: $($p.CommandLine)"
 }
 if ($log) { Say '--- chrome_debug.log (last 15 lines)'; Get-Content $log.FullName -Tail 15 | ForEach-Object { Say $_ } }
+# Is the app itself alive and showing a window, and what does the browser side look like?
+$app.Refresh()
+Say "app: exited=$($app.HasExited) responding=$($app.Responding) window='$($app.MainWindowTitle)' cpu=$([math]::Round($app.CPU, 1))s"
+Say '--- every process under the app (type, pid, cpu seconds, working set MB)'
+foreach ($p in (Descendants $app.Id)) {
+  $type = if ($p.CommandLine -match '--type=([w-]+)') { $Matches[1] } else { 'browser' }
+  $gp = Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue
+  Say "  $($p.Name) $type pid=$($p.ProcessId) cpu=$([math]::Round($gp.CPU, 1)) ws=$([math]::Round($gp.WorkingSet64 / 1MB))"
+}
+$dumps = Get-ChildItem $work -Recurse -Force -Include *.dmp -ErrorAction SilentlyContinue
+Say "crash dumps under the user data folder: $(@($dumps).Count)"
+$events = Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = (Get-Date).AddMinutes(-3) } -ErrorAction SilentlyContinue | Where-Object { $_.LevelDisplayName -in 'Error', 'Warning' -and $_.Message -match 'recording-fixer|msedgewebview2|WebView2' } | Select-Object -First 5
+foreach ($e in $events) { Say "event $($e.Id) $($e.ProviderName): $(($e.Message -split "`n")[0])" }
 if (-not $app.HasExited) { Stop-Process -Id $app.Id -Force }
 Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
 Set-Content -Path $Out -Value $lines
