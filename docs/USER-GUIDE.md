@@ -10,7 +10,7 @@ Contents: [Installing](#installing) · [The first minute](#the-first-minute) · 
 
 ## Installing
 
-**Windows 10 or 11 (64-bit).** Run the `…-setup.exe` from the [Releases page](https://github.com/djryanj/recording-fixer/releases). It installs for your user only (no administrator rights) and adds a Start menu entry. The installer sets up Microsoft's WebView2 if your PC does not have it yet.
+**Windows 10 or 11 (64-bit).** Run the `Recording Fixer for Serato DJ_…_x64-setup.exe` from the [Releases page](https://github.com/djryanj/recording-fixer/releases). It installs for your user only (no administrator rights) and adds a Start menu entry. The installer sets up Microsoft's WebView2 if your PC does not have it yet.
 
 **macOS 11 or newer (Apple silicon and Intel).** Open the `.dmg` and drag the app into Applications.
 

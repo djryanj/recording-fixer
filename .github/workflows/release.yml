@@ -171,9 +171,10 @@ jobs:
         shell: pwsh
         run: |
           $installer = (Get-ChildItem dist/*-setup.exe | Select-Object -First 1).FullName
-          Start-Process -FilePath $installer -ArgumentList '/S' -Wait
-          $dir = Join-Path $env:LOCALAPPDATA 'Recording Fixer for Serato DJ'
-          if (-not (Test-Path $dir)) { Get-ChildItem $env:LOCALAPPDATA | Select-Object -ExpandProperty Name; throw "not installed where expected: $dir" }
+          # Silent per-user install into a known folder (no spaces: NSIS wants /D= last and unquoted).
+          $dir = Join-Path $env:RUNNER_TEMP 'installed-app'
+          Start-Process -FilePath $installer -ArgumentList "/S /D=$dir" -Wait
+          if (-not (Test-Path $dir)) { throw "not installed where expected: $dir" }
           $exe = Get-ChildItem $dir -Filter *.exe | Where-Object { $_.Name -notmatch 'uninstall' } | Select-Object -First 1
           Write-Host "installed: $($exe.FullName)"
           Get-ChildItem $dir | ForEach-Object { Write-Host "  $($_.Name)" }
