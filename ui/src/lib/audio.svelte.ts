@@ -136,7 +136,8 @@ export class AudioStore {
   }
 
   async play() {
-    this.state = { ...this.state, playing: true, ended: false };
+    // Only show "playing" ahead of the engine when it has something to play; otherwise the next poll would flip it back.
+    if (this.state.loaded) this.state = { ...this.state, playing: true, ended: false };
     await api.audioPlay();
   }
 

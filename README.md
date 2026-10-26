@@ -45,7 +45,7 @@ Click **Output** in the transport to choose where audio plays. Devices are group
 
 The choice is remembered and reopened at start-up; if the device has gone, the app falls back to the system default. Files whose sample rate differs from the device's are resampled (FFT resampler) for playback. Exports are never resampled.
 
-ASIO is a build option on Windows (`asio`, on by default): it needs **LLVM** (`winget install LLVM.LLVM`, and set `LIBCLANG_PATH` to its `bin` folder) because the build generates bindings to Steinberg's ASIO SDK, which cpal downloads. **Licensing:** that SDK is dual-licensed GPLv3 / proprietary, so an app built _with_ ASIO is subject to those terms if you distribute it. Build without it using `cargo tauri build -- --no-default-features`; macOS builds always do.
+ASIO is a build option on Windows (`asio`, on by default): it needs **LLVM** (`winget install LLVM.LLVM`, and set `LIBCLANG_PATH` to its `bin` folder) because the build generates bindings to Steinberg's ASIO SDK, which cpal downloads. **Licensing:** that SDK is dual-licensed GPLv3 / proprietary, so an app built _with_ ASIO is subject to those terms if you distribute it. Build without it using `npm --prefix ui exec -- tauri build -- --no-default-features`; macOS builds always do.
 
 ## Apple's AAC encoder (optional, better quality than ffmpeg's built-in)
 
@@ -84,7 +84,6 @@ winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--wait
 winget install --id Rustlang.Rustup -e          # Rust (stable, MSVC)
 winget install --id OpenJS.NodeJS.LTS -e        # Node.js 22+ (24 LTS recommended)
 winget install --id Gyan.FFmpeg -e              # ffmpeg + ffprobe, for export and tests
-cargo install tauri-cli --version "^2" --locked # Tauri CLI
 ```
 
 WebView2 is preinstalled on Windows 11. On Windows 10, install the Evergreen WebView2 runtime.
@@ -105,7 +104,6 @@ xcode-select --install
 # Homebrew: https://brew.sh
 brew install rustup node ffmpeg
 rustup default stable
-cargo install tauri-cli --version "^2" --locked
 ```
 
 ### Verify
@@ -113,7 +111,7 @@ cargo install tauri-cli --version "^2" --locked
 ```sh
 rustc --version && cargo --version && node --version && npm --version
 ffmpeg -version && ffprobe -version
-cargo tauri --version
+npm --prefix ui install && npm --prefix ui exec -- tauri --version   # the Tauri CLI comes with the UI dependencies
 ```
 
 If `cargo` can't find `link.exe` on Windows, the Build Tools C++ workload didn't install; rerun the first command.
@@ -150,14 +148,14 @@ The recipes set `LIBCLANG_PATH` for ASIO on Windows and leave ASIO out on macOS,
 ### Run, test, build
 
 ```sh
-npm --prefix ui install          # once
-cargo tauri dev                  # run the app with hot reload
-cargo test --workspace           # Rust tests (ffmpeg tests skip if ffmpeg is missing)
-npm --prefix ui test             # UI logic and component tests (Vitest)
-npm --prefix ui run check        # svelte-check / TypeScript
+npm --prefix ui install              # once; also installs the Tauri CLI (a UI dev dependency)
+npm --prefix ui exec -- tauri dev    # run the app with hot reload
+cargo test --workspace               # Rust tests (ffmpeg tests skip if ffmpeg is missing)
+npm --prefix ui test                 # UI logic and component tests (Vitest)
+npm --prefix ui run check            # svelte-check / TypeScript
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check
-cargo tauri build                # installers (NSIS/MSI on Windows, .dmg on macOS)
+npm --prefix ui exec -- tauri build  # installers (NSIS/MSI on Windows, .dmg on macOS)
 ```
 
 ### Testing
@@ -171,16 +169,15 @@ There are four layers, from fast to realistic. All of them run in CI (`.github/w
 | UI components         | The real Svelte screens (list, editor, transport, audio settings, timeline pointer interaction) with a scripted fake backend                              | `npm --prefix ui test`    |
 | End to end            | The **real built app**: real window, Rust backend and files. Repairs a broken file, combines, fades, exports MP3 with tags, previews audio                | `npm --prefix ui run e2e` |
 
-The end-to-end tests drive the app through `tauri-driver` and Edge WebDriver, using synthetic recordings in a temp folder (via `RECORDING_FIXER_FOLDERS`) and a throwaway WebView2 profile, so your Serato library is never touched. One-time setup on Windows:
+The end-to-end tests drive the app through Edge WebDriver (msedgedriver starts the WebView2 app itself), using synthetic recordings in a temp folder (via `RECORDING_FIXER_FOLDERS`) and a throwaway WebView2 profile, so your Serato library is never touched. One-time setup on Windows:
 
 ```powershell
-cargo install tauri-driver --locked
 # msedgedriver must match the installed WebView2 runtime version:
 $v = (Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}').pv
 New-Item -ItemType Directory -Force ui/e2e/.tools | Out-Null
 Invoke-WebRequest "https://msedgedriver.microsoft.com/$v/edgedriver_win64.zip" -OutFile ui/e2e/.tools/edgedriver.zip
 Expand-Archive ui/e2e/.tools/edgedriver.zip ui/e2e/.tools/edgedriver -Force
-cargo tauri build --debug --no-bundle    # the app under test; rebuild after changing code
+npm --prefix ui exec -- tauri build --debug --no-bundle    # the app under test; rebuild after changing code
 npm --prefix ui run e2e
 ```
 

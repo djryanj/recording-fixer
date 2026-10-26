@@ -54,6 +54,7 @@ Audio starts after the `SSND` header, at byte 54 when offset and blockSize are 0
   - **Windows paths are case-insensitive**: `Timeline.test.ts` and `timeline.test.ts` are the same file (one overwrote the other once). Name component and logic tests differently (`TimelineView.test.ts` vs `timelineModel.test.ts`).
   - **Never set `resolve.conditions` outside test mode in `ui/vite.config.ts`**: it replaces Vite's defaults, the production bundle is built against Svelte's *server* entry, and the real app shows a blank window ("`mount(...)` is not available on the server") while every unit/component test still passes. Only the end-to-end test catches this.
   - **wry overrides `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`** by always setting its own WebView2 arguments, so on the CI runner msedgedriver's `--remote-debugging-port=0` was ignored (`DevToolsActivePort file doesn't exist`) while the same exe worked locally. The window is therefore built in code (`create_main_window`, `"create": false` in `tauri.conf.json`) and folds the variable into `additional_browser_args`. msedgedriver's `args` capability goes to the *app's* command line, not the browser. If e2e fails only on CI, run `just e2e-diagnose` / read the `e2e-logs` artifact.
+  - **`Swatinem/rust-cache` does not save when the job fails**, and PR caches are only visible to that PR, so a job that keeps failing on main rebuilds from scratch on every run (the e2e job did: a 2-3 s restore is a miss). A flaky test on main therefore also costs every PR its cache. The same applies to `cargo install`ed tools, which is one reason CI installs none.
   - A function returned from a vitest `beforeEach` is a cleanup callback: `beforeEach(() => mock.mockReset())` calls the mock after each test. Use braces.
   - In Svelte grid layouts give children `min-width: 0` (and `minmax(0, 1fr)` tracks) or a wide canvas feeds its width back and overflows the window.
   - The timeline must be measured before it fits itself; fitting against the 800 px placeholder left the clips filling only part of the view.
@@ -67,7 +68,7 @@ Audio starts after the `SSND` header, at byte 54 when offset and blockSize are 0
 - `cargo test --workspace -- --ignored` runs tests needing the full sample files in the repo root
 - `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --all --check` (both must be clean)
 - `npm --prefix ui test` for UI tests (Vitest); `npm --prefix ui run check` for svelte-check / tsc
-- `cargo tauri dev` for the app; `cargo tauri build` for installers; `cargo tauri build --debug --no-bundle` for a quick exe
+- `just dev` for the app; `just build` for installers; `just build-debug` for a quick exe. The Tauri CLI is the npm dev dependency `@tauri-apps/cli` (no `cargo install`); raw form `npm --prefix ui exec -- tauri ...`, which runs from the repo root (from `ui/` it cannot find `src-tauri`).
 - On this machine `cargo`/`npm` are not on the PATH of fresh PowerShell tool shells; prepend `$env:USERPROFILE\.cargo\bin` and the Machine+User PATH.
 
 ## Testing
@@ -76,7 +77,7 @@ Four layers; a change is not done until the relevant ones pass. See README "Test
 1. **Rust** (`cargo test --workspace`, clippy `-D warnings`, `cargo fmt --check`): strict TDD for the core crates; fixtures are generated in code; the playback engine runs against a simulated device and checks audio sample-for-sample (seeks, pauses, resampling, channel routing, device switching). Real-sample tests are `#[ignore]` (`-- --ignored`).
 2. **UI logic** (Vitest, node): `timeline.ts`, `naming.ts`, `exportOptions.ts`, `format.ts`, `library.ts`, `theme.ts`, the audio store.
 3. **UI components** (Vitest + jsdom + Testing Library, `// @vitest-environment jsdom`): every screen against `src/test/backend.ts`, a scriptable fake of all Tauri commands. The canvas gets a recording 2D context (`src/test/setup.ts`); `TimelineHarness.svelte` binds the zoom like the editor does.
-4. **End to end** (`npm --prefix ui run e2e`): the real built app through tauri-driver + msedgedriver, synthetic recordings via `RECORDING_FIXER_FOLDERS`, throwaway `WEBVIEW2_USER_DATA_FOLDER`. After changing any code the exe must be rebuilt first (`cargo tauri build --debug --no-bundle`) or the test runs the old app. It has caught a blank-window production regression that layers 1-3 could not.
+4. **End to end** (`npm --prefix ui run e2e`): the real built app through msedgedriver directly (`ms:edgeOptions.binary`; no tauri-driver), synthetic recordings via `RECORDING_FIXER_FOLDERS`, throwaway `WEBVIEW2_USER_DATA_FOLDER`. After changing any code the exe must be rebuilt first (`just build-debug`) or the test runs the old app. It has caught a blank-window production regression that layers 1-3 could not.
 When a test fails, ask whether the app or the test is wrong: both happened repeatedly (real bugs found this way: removing a clip threw and lost the selection; the timeline fitted to the wrong width; the resampler returned one frame too many from float rounding; a seek-then-play could blip old audio).
 
 ## Development environment
