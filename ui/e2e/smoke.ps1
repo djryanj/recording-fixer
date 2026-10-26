@@ -50,27 +50,23 @@ Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
 if (-not $ok) { Write-Host "::error::WebView2 did not start under the app"; exit 1 }
 Write-Host "smoke ok: WebView2 started under the app"
 
-# Phase 2 (information only): what msedgedriver does. It sets these browser arguments and then waits for
-# Chromium to write DevToolsActivePort into the user data folder. Report whether that file appears and
-# which arguments the browser process really received.
-$work = Join-Path ([IO.Path]::GetTempPath()) ("srf-smoke2-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
-New-Item -ItemType Directory $work | Out-Null
-$env:RECORDING_FIXER_FOLDERS = $work
-$env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $work '.webview'
-$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--enable-automation --enable-logging --log-level=0 --remote-debugging-port=0 --test-type=webdriver'
-$app = Start-Process $exe -PassThru
-$found = $null
-for ($i = 0; $i -lt 40 -and -not $found; $i++) {
-  Start-Sleep -Milliseconds 500
-  $found = Get-ChildItem $work -Recurse -Filter DevToolsActivePort -Force -ErrorAction SilentlyContinue | Select-Object -First 1
+# Phase 2 (information only): what msedgedriver does. It sets WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS with
+# --remote-debugging-port=0 and waits for Chromium to write DevToolsActivePort. probe.ps1 repeats that;
+# run it as we are, and again de-elevated, since CI runs elevated and the browser may ignore the argument then.
+$probe = Join-Path $here 'probe.ps1'
+$outFile = Join-Path $logs 'probe-as-is.txt'
+& pwsh -NoProfile -File $probe -Exe $exe -Out $outFile
+Write-Host "--- debug-port probe (as is, elevated: $admin)"
+Get-Content $outFile
+
+if ($admin) {
+  $outFile = Join-Path $logs 'probe-deelevated.txt'
+  Remove-Item $outFile -ErrorAction SilentlyContinue
+  runas /trustlevel:0x20000 "pwsh -NoProfile -File `"$probe`" -Exe `"$exe`" -Out `"$outFile`""
+  for ($i = 0; $i -lt 120 -and -not (Test-Path $outFile); $i++) { Start-Sleep -Milliseconds 500 }
+  Write-Host "--- debug-port probe (de-elevated with runas /trustlevel)"
+  if (Test-Path $outFile) { Get-Content $outFile } else { Write-Host "no output: the de-elevated process did not run" }
 }
-Write-Host "--- debug-port probe: DevToolsActivePort $(if ($found) { "appeared at $($found.FullName)" } else { 'did NOT appear' })"
-Descendants $app.Id | Where-Object { $_.Name -eq 'msedgewebview2.exe' -and $_.CommandLine -notmatch '--type=' } | ForEach-Object { Write-Host "browser process args: $($_.CommandLine)" }
-Write-Host "--- user data folder"
-Get-ChildItem $work -Recurse -Force -ErrorAction SilentlyContinue | Select-Object -First 40 | ForEach-Object { Write-Host "  $($_.FullName.Substring($work.Length))" }
-foreach ($log in (Get-ChildItem $work -Recurse -Force -Filter 'chrome_debug.log' -ErrorAction SilentlyContinue)) {
-  Write-Host "--- $($log.Name) (last 30 lines)"; Get-Content $log.FullName -Tail 30
-}
-if (-not $app.HasExited) { Stop-Process -Id $app.Id -Force }
-Remove-Item Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
-Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
+
+Write-Host "--- WebView2 policies"
+Get-ChildItem 'HKLM:SOFTWAREPoliciesMicrosoft' -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_.Name; Get-ItemProperty $_.PSPath | Format-List | Out-String | Write-Host }
