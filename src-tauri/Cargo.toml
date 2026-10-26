@@ -1,0 +1,35 @@
+[package]
+name = "recording-fixer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+repository.workspace = true
+description = "Find, repair, combine and export Serato DJ recordings"
+
+[lib]
+name = "recording_fixer_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+# ASIO output (Windows). Needs LLVM at build time and pulls in Steinberg's ASIO SDK, which is dual-licensed
+# GPLv3 / proprietary: a distributed build with this feature is subject to those terms.
+# Build without it using `--no-default-features`.
+default = ["asio"]
+asio = ["playback/asio"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+aiff-core.workspace = true
+edit-core.workspace = true
+export.workspace = true
+library = { path = "../crates/library" }
+peaks = { path = "../crates/peaks" }
+playback = { path = "../crates/playback" }
+tauri-plugin-opener = "2.7.2"

@@ -1,0 +1,14 @@
+[package]
+name = "peaks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+aiff-core.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+aiff-core = { workspace = true, features = ["testutil"] }
+tempfile.workspace = true

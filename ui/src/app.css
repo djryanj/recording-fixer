@@ -1,0 +1,469 @@
+/*
+  Design system: a DJ-booth instrument panel.
+  Warm graphite surfaces, one sodium-amber signal colour (like a VFD/LED display), hairline panels with
+  square corners, condensed uppercase labels and monospace numerals like hardware lettering.
+  Status is shown with LEDs, not pills. Light theme is "studio paper": cream with ink and burnt amber.
+*/
+@import '@fontsource/barlow/400.css';
+@import '@fontsource/barlow/500.css';
+@import '@fontsource/barlow/600.css';
+@import '@fontsource/barlow-condensed/500.css';
+@import '@fontsource/barlow-condensed/600.css';
+@import '@fontsource/barlow-condensed/700.css';
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
+
+:root {
+  color-scheme: dark;
+  --font-ui: 'Barlow', 'Segoe UI', system-ui, sans-serif;
+  --font-label: 'Barlow Condensed', 'Barlow', 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+
+  --bg: #0c0d0e;
+  --panel: #141517;
+  --panel-2: #1b1d20;
+  --inset: #09090a;
+  --line: #26292d;
+  --line-strong: #3b3f45;
+  --text: #ebe7db;
+  --muted: #8d9095;
+  --dim: #5c5f64;
+
+  --amber: #ffa31a;
+  --amber-hot: #ffbf5c;
+  --amber-ink: #1b1100;
+  --amber-wash: rgba(255, 163, 26, 0.1);
+  --amber-glow: rgba(255, 163, 26, 0.35);
+
+  --led-ok: #4fd68c;
+  --led-bad: #ff5b3a;
+  --led-busy: #4ea8ff;
+  --led-off: #565a60;
+
+  --clip-a: #17140e;
+  --clip-b: #111316;
+  --wave: #ffa31a;
+  --wave-core: #ffd48a;
+  --playhead: #f4f0e4;
+  --edit-point: #5ad1e6;
+
+  --shadow: 0 18px 60px rgba(0, 0, 0, 0.7);
+  --radius: 2px;
+  font-family: var(--font-ui);
+  font-size: 14px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    color-scheme: light;
+    --bg: #e7e2d6;
+    --panel: #f3efe4;
+    --panel-2: #e3ddcd;
+    --inset: #fbf9f2;
+    --line: #cdc6b3;
+    --line-strong: #a8a08a;
+    --text: #1c1a16;
+    --muted: #6a665a;
+    --dim: #948f80;
+
+    --amber: #cf6f00;
+    --amber-hot: #e88512;
+    --amber-ink: #fff8ea;
+    --amber-wash: rgba(207, 111, 0, 0.1);
+    --amber-glow: rgba(207, 111, 0, 0.3);
+
+    --led-ok: #1e9b57;
+    --led-bad: #d23a1a;
+    --led-busy: #2477d6;
+    --led-off: #a6a090;
+
+    --clip-a: #ebe3d0;
+    --clip-b: #e1e3e2;
+    --wave: #a65500;
+    --wave-core: #6a3600;
+    --playhead: #1c1a16;
+    --edit-point: #0f8aa3;
+
+    --shadow: 0 18px 50px rgba(60, 50, 20, 0.28);
+  }
+}
+
+/* The same palette when the user picks Light explicitly in the app. */
+:root[data-theme='light'] {
+    color-scheme: light;
+    --bg: #e7e2d6;
+    --panel: #f3efe4;
+    --panel-2: #e3ddcd;
+    --inset: #fbf9f2;
+    --line: #cdc6b3;
+    --line-strong: #a8a08a;
+    --text: #1c1a16;
+    --muted: #6a665a;
+    --dim: #948f80;
+
+    --amber: #cf6f00;
+    --amber-hot: #e88512;
+    --amber-ink: #fff8ea;
+    --amber-wash: rgba(207, 111, 0, 0.1);
+    --amber-glow: rgba(207, 111, 0, 0.3);
+
+    --led-ok: #1e9b57;
+    --led-bad: #d23a1a;
+    --led-busy: #2477d6;
+    --led-off: #a6a090;
+
+    --clip-a: #ebe3d0;
+    --clip-b: #e1e3e2;
+    --wave: #a65500;
+    --wave-core: #6a3600;
+    --playhead: #1c1a16;
+    --edit-point: #0f8aa3;
+
+    --shadow: 0 18px 50px rgba(60, 50, 20, 0.28);
+}
+
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--amber);
+  color: var(--amber-ink);
+}
+
+/* ---- type ---- */
+.label,
+th {
+  font-family: var(--font-label);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.mono,
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-label);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin: 0;
+}
+
+/* ---- buttons ---- */
+button {
+  font: inherit;
+  font-family: var(--font-label);
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  padding: 6px 14px;
+  cursor: pointer;
+  transition:
+    border-color 0.12s,
+    color 0.12s,
+    background 0.12s;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--amber);
+  color: var(--amber-hot);
+}
+
+button:active:not(:disabled) {
+  background: var(--amber-wash);
+}
+
+button:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+button.primary {
+  background: var(--amber);
+  border-color: var(--amber);
+  color: var(--amber-ink);
+}
+
+button.primary:hover:not(:disabled) {
+  background: var(--amber-hot);
+  border-color: var(--amber-hot);
+  color: var(--amber-ink);
+}
+
+button.ghost {
+  background: transparent;
+  border-color: transparent;
+}
+
+button.ghost:hover:not(:disabled) {
+  border-color: var(--line-strong);
+}
+
+button.link {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  color: var(--amber);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: var(--font-ui);
+  font-weight: 500;
+}
+
+button.icon {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  font-size: 12px;
+  letter-spacing: 0;
+}
+
+:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 1px;
+}
+
+/* ---- inputs ---- */
+input[type='text'],
+input[type='search'],
+input[type='number'],
+select {
+  font: inherit;
+  color: var(--text);
+  background: var(--inset);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 6px 9px;
+  min-width: 0;
+}
+
+input[type='text']:hover,
+input[type='search']:hover,
+input[type='number']:hover,
+select:hover {
+  border-color: var(--line-strong);
+}
+
+input[type='text']:focus,
+input[type='search']:focus,
+input[type='number']:focus,
+select:focus {
+  outline: none;
+  border-color: var(--amber);
+  box-shadow: 0 0 0 1px var(--amber-glow);
+}
+
+select {
+  appearance: none;
+  padding-right: 28px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238d9095'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+}
+
+input::placeholder {
+  color: var(--dim);
+}
+
+input[type='checkbox'],
+input[type='radio'] {
+  appearance: none;
+  margin: 0;
+  width: 15px;
+  height: 15px;
+  flex: none;
+  background: var(--inset);
+  border: 1px solid var(--line-strong);
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+input[type='checkbox'] {
+  border-radius: 2px;
+}
+
+input[type='radio'] {
+  border-radius: 50%;
+}
+
+input[type='checkbox']:hover,
+input[type='radio']:hover {
+  border-color: var(--amber);
+}
+
+input[type='checkbox']:checked {
+  background: var(--amber);
+  border-color: var(--amber);
+}
+
+input[type='checkbox']:checked::after {
+  content: '';
+  width: 8px;
+  height: 4px;
+  border-left: 2px solid var(--amber-ink);
+  border-bottom: 2px solid var(--amber-ink);
+  transform: translateY(-1px) rotate(-45deg);
+}
+
+input[type='radio']:checked {
+  border-color: var(--amber);
+}
+
+input[type='radio']:checked::after {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--amber);
+  box-shadow: 0 0 6px var(--amber-glow);
+}
+
+input:disabled,
+select:disabled {
+  opacity: 0.4;
+}
+
+input[type='range'] {
+  appearance: none;
+  background: transparent;
+  height: 18px;
+  margin: 0;
+  cursor: pointer;
+}
+
+input[type='range']::-webkit-slider-runnable-track {
+  height: 4px;
+  background: linear-gradient(to right, var(--amber) var(--fill, 0%), var(--line-strong) var(--fill, 0%));
+  border-radius: 2px;
+}
+
+input[type='range']::-webkit-slider-thumb {
+  appearance: none;
+  width: 10px;
+  height: 18px;
+  margin-top: -7px;
+  background: var(--panel-2);
+  border: 1px solid var(--text);
+  border-radius: 1px;
+}
+
+input[type='range']:hover::-webkit-slider-thumb {
+  border-color: var(--amber);
+}
+
+/* ---- panels, LEDs, misc ---- */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+
+.led {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--led-off);
+  flex: none;
+}
+
+.led.ok {
+  background: var(--led-ok);
+  box-shadow: 0 0 7px color-mix(in srgb, var(--led-ok) 70%, transparent);
+}
+
+.led.bad {
+  background: var(--led-bad);
+  box-shadow: 0 0 7px color-mix(in srgb, var(--led-bad) 70%, transparent);
+}
+
+.led.busy {
+  background: var(--led-busy);
+  box-shadow: 0 0 7px color-mix(in srgb, var(--led-busy) 70%, transparent);
+}
+
+.led.amber {
+  background: var(--amber);
+  box-shadow: 0 0 7px var(--amber-glow);
+}
+
+progress {
+  appearance: none;
+  height: 4px;
+  border: none;
+  background: var(--line-strong);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+progress::-webkit-progress-bar {
+  background: var(--line-strong);
+}
+
+progress::-webkit-progress-value {
+  background: var(--amber);
+}
+
+code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  color: var(--amber-hot);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border: 2px solid var(--bg);
+  border-radius: 6px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--dim);
+}

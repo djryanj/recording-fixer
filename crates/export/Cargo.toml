@@ -1,0 +1,18 @@
+[package]
+name = "export"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+aiff-core.workspace = true
+edit-core.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+libloading = "0.9"
+
+[dev-dependencies]
+aiff-core = { workspace = true, features = ["testutil"] }
+tempfile.workspace = true

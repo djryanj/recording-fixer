@@ -1,0 +1,16 @@
+[package]
+name = "aiff-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+# Synthetic AIFF generators for tests in this and other crates.
+testutil = []
+
+[dependencies]
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

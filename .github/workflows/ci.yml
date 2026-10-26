@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+# Nothing here writes to the repo, so the token gets read-only access whatever the repo default is.
+permissions:
+  contents: read
+
+jobs:
+  deny:
+    name: Dependency policy (cargo deny)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@c3bbe7e4e3f7baeee1a3dd9aec0a3b2aded580fb # v2.1.1
+        with:
+          command: check advisories bans licenses sources
+
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install ffmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+      - name: Install ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg -y --no-progress
+
+      # ASIO (Windows) needs LLVM and pulls in Steinberg's SDK. macOS builds leave it out.
+      - name: Install LLVM (Windows)
+        if: runner.os == 'Windows'
+        run: choco install llvm -y --no-progress
+
+      - name: UI dependencies
+        run: npm --prefix ui ci
+      - name: UI type check
+        run: npm --prefix ui run check
+      - name: UI tests (logic + components)
+        run: npm --prefix ui test
+
+      - name: Rust format
+        run: cargo fmt --all --check
+      - name: Rust lints (Windows, with ASIO)
+        if: runner.os == 'Windows'
+        run: cargo clippy --workspace --all-targets -- -D warnings
+        env:
+          LIBCLANG_PATH: 'C:\Program Files\LLVM\bin'
+      - name: Rust lints (macOS, without ASIO)
+        if: runner.os == 'macOS'
+        run: cargo clippy --workspace --all-targets --no-default-features -- -D warnings
+      - name: Rust tests (Windows)
+        if: runner.os == 'Windows'
+        run: cargo test --workspace
+        env:
+          LIBCLANG_PATH: 'C:\Program Files\LLVM\bin'
+      - name: Rust tests (macOS, without ASIO)
+        if: runner.os == 'macOS'
+        run: cargo test --workspace --no-default-features
+
+  e2e:
+    name: End-to-end (Windows, real app)
+    runs-on: windows-latest
+    needs: test
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Tools
+        run: |
+          choco install ffmpeg llvm -y --no-progress
+          cargo install tauri-cli --version "^2" --locked
+          cargo install tauri-driver --locked
+          npm --prefix ui ci
+      - name: Matching Edge WebDriver
+        shell: pwsh
+        run: |
+          $v = (Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}').pv
+          New-Item -ItemType Directory -Force ui/e2e/.tools | Out-Null
+          Invoke-WebRequest "https://msedgedriver.microsoft.com/$v/edgedriver_win64.zip" -OutFile ui/e2e/.tools/edgedriver.zip
+          Expand-Archive ui/e2e/.tools/edgedriver.zip ui/e2e/.tools/edgedriver -Force
+      - name: Build the app
+        run: cargo tauri build --debug --no-bundle
+        env:
+          LIBCLANG_PATH: 'C:\Program Files\LLVM\bin'
+      - name: Drive it
+        run: npm --prefix ui run e2e

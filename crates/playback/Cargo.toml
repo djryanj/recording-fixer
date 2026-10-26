@@ -1,0 +1,27 @@
+[package]
+name = "playback"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+default = []
+# The simulated audio device, for tests in this and other crates.
+testing = []
+# ASIO output on Windows. Needs LLVM (libclang) at build time; cpal downloads Steinberg's SDK,
+# which is dual-licensed GPLv3 / proprietary, so a build with this feature is subject to those terms.
+asio = ["cpal/asio"]
+
+[dependencies]
+aiff-core.workspace = true
+edit-core.workspace = true
+cpal = "0.18"
+rubato = "5"
+ringbuf = "0.5"
+serde = { version = "1", features = ["derive"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+aiff-core = { workspace = true, features = ["testutil"] }
+tempfile.workspace = true

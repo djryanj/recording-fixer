@@ -1,0 +1,15 @@
+target/
+node_modules/
+dist/
+*.bak
+
+# Real recordings are large and private; use the generated/sliced fixtures in tests/fixtures
+*.aif
+!tests/fixtures/**/*.aif
+
+# Tauri generated
+src-tauri/gen/
+
+# End-to-end tooling (downloaded WebDriver) and local debug output
+ui/e2e/.tools/
+*.hdrbak
