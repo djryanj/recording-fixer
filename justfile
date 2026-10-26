@@ -42,6 +42,10 @@ test-samples:
 e2e: build-debug
     npm --prefix ui run e2e
 
+# Start the debug exe through msedgedriver with its verbose log (for e2e session failures)
+e2e-diagnose:
+    node ui/e2e/diagnose.mjs
+
 # Quick debug exe, no installer
 build-debug:
     cargo tauri build --debug --no-bundle {{ if os() == "macos" { "-- --no-default-features" } else { "" } }}

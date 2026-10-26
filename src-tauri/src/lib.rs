@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindowBuilder};
 
 /// Shared cancel flag for whichever job is running (one at a time).
 #[derive(Default)]
@@ -669,6 +669,33 @@ fn reveal_in_folder(path: String) -> Result<(), String> {
     result.map(|_| ()).map_err(|e| e.to_string())
 }
 
+/// The window is described in tauri.conf.json (`create: false`) and built here so WebDriver can work.
+/// tauri-driver asks for the browser's debug port through WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS, but
+/// wry always sets its own argument list on the WebView2 environment, and on the CI runner the
+/// variable was then ignored (no DevToolsActivePort, so no session). Folding the variable into the
+/// arguments we pass ourselves removes the dependence on that precedence. Unset, nothing changes.
+fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
+    let config = app
+        .config()
+        .app
+        .windows
+        .first()
+        .expect("tauri.conf.json defines the main window");
+    #[cfg_attr(not(windows), allow(unused_mut))]
+    let mut builder = WebviewWindowBuilder::from_config(app, config)?;
+    #[cfg(windows)]
+    if let Some(extra) = std::env::var_os("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") {
+        // wry's own defaults, which setting the arguments replaces.
+        let args = format!(
+            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required {}",
+            extra.to_string_lossy()
+        );
+        builder = builder.additional_browser_args(&args);
+    }
+    builder.build()?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -677,6 +704,10 @@ pub fn run() {
         .manage(Jobs::default())
         .manage(Arc::new(PeaksStore::default()))
         .manage(Arc::new(playback::start_system()))
+        .setup(|app| {
+            create_main_window(app.handle())?;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             default_folders,
             scan,

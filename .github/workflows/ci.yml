@@ -162,6 +162,10 @@ jobs:
         run: ./ui/e2e/smoke.ps1
       - name: Drive it
         run: npm --prefix ui run e2e
+      - name: Diagnose (msedgedriver verbose log)
+        if: failure()
+        continue-on-error: true
+        run: node ui/e2e/diagnose.mjs
       - name: Keep driver logs
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

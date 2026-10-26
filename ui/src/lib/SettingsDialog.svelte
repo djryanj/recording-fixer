@@ -56,10 +56,11 @@
     </section>
 
     <section aria-label="ffmpeg">
-      <h3 class="label">ffmpeg: the program behind MP3 and AAC</h3>
+      <h3 class="label">ffmpeg: needed to save MP3 and AAC</h3>
       <p class="why">
         Saving as <b>MP3</b> or <b>AAC (.m4a)</b> uses <b>ffmpeg</b>, a free audio converter this app runs for you.
-        You do <b>not</b> need it for repairing files, playing them, editing, or saving as <b>AIFF</b>.
+        That is true even when Apple's AAC encoder does the encoding: ffmpeg still packs its output into the .m4a file.
+        You do <b>not</b> need ffmpeg for repairing files, playing them, editing, or saving as <b>AIFF</b>.
       </p>
       <dl>
         <dt class="label">Status</dt>

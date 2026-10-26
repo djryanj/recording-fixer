@@ -12,6 +12,7 @@
     "windows": [
       {
         "title": "Recording Fixer for Serato DJ",
+        "create": false,
         "width": 1120,
         "height": 740,
         "minWidth": 860,

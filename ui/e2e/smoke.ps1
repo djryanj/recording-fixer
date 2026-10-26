@@ -49,3 +49,24 @@ Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
 
 if (-not $ok) { Write-Host "::error::WebView2 did not start under the app"; exit 1 }
 Write-Host "smoke ok: WebView2 started under the app"
+
+# Phase 2 (information only): what msedgedriver does. It sets WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS with
+# --remote-debugging-port=0 and waits for Chromium to write DevToolsActivePort. probe.ps1 repeats that;
+# run it as we are, and again de-elevated, since CI runs elevated and the browser may ignore the argument then.
+$probe = Join-Path $here 'probe.ps1'
+$outFile = Join-Path $logs 'probe-as-is.txt'
+& pwsh -NoProfile -File $probe -Exe $exe -Out $outFile
+Write-Host "--- debug-port probe (as is, elevated: $admin)"
+Get-Content $outFile
+
+if ($admin) {
+  $outFile = Join-Path $logs 'probe-deelevated.txt'
+  Remove-Item $outFile -ErrorAction SilentlyContinue
+  runas /trustlevel:0x20000 "pwsh -NoProfile -File `"$probe`" -Exe `"$exe`" -Out `"$outFile`""
+  for ($i = 0; $i -lt 120 -and -not (Test-Path $outFile); $i++) { Start-Sleep -Milliseconds 500 }
+  Write-Host "--- debug-port probe (de-elevated with runas /trustlevel)"
+  if (Test-Path $outFile) { Get-Content $outFile } else { Write-Host "no output: the de-elevated process did not run" }
+}
+
+Write-Host "--- WebView2 policies"
+Get-ChildItem 'HKLM:SOFTWAREPoliciesMicrosoft' -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_.Name; Get-ItemProperty $_.PSPath | Format-List | Out-String | Write-Host }

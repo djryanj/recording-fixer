@@ -140,6 +140,7 @@ brew install just                     # macOS
 | `just test-samples` | also the tests that need the real `.aif` samples in the repo root                          |
 | `just build-debug`  | quick debug exe, no installer                                                              |
 | `just e2e`          | build the debug exe, then run the end-to-end suite (Windows; one-time setup below)         |
+| `just e2e-diagnose` | start the debug exe through msedgedriver with a verbose log (for session failures)         |
 | `just release`      | optimised standalone app for this machine, no installer (`target/release/recording-fixer`) |
 | `just build`        | installers                                                                                 |
 | `just ci`           | `check`, `test` and `e2e`: what CI runs                                                    |

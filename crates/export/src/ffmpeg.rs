@@ -44,6 +44,8 @@ pub fn locate_ffmpeg(user: Option<&Path>, bundled_dirs: &[PathBuf]) -> Option<Pa
 }
 
 fn command(ffmpeg: &Path) -> Command {
+    // Only the Windows branch mutates the command.
+    #[cfg_attr(not(windows), allow(unused_mut))]
     let mut cmd = Command::new(ffmpeg);
     #[cfg(windows)]
     {
