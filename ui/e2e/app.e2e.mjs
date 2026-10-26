@@ -422,6 +422,7 @@ describe('the real app', () => {
     await tickRow('Good Two.aif');
     await clickXp(XP.button('Edit & export…'));
     await find("//div[@aria-label='Editor']");
+    await clickXp("//div[@aria-label='Editor']//button[@role='tab'][contains(.,'Fades')]");
     await (await find("//input[@aria-label='Fade in (seconds)']")).sendKeys('1');
     await (await find("//input[@aria-label='Fade out (seconds)']")).sendKeys('1');
     const before = new Set(dirFiles());
@@ -483,5 +484,37 @@ describe('the real app', () => {
     await pauses[0].click();
     await find("//button[@aria-label='Play']");
     assert.ok(await driver.findElement(By.css('main')).isDisplayed());
+  });
+
+  // Last on purpose: the editor remembers the loudness choice for the exports after it.
+  it('matches a target loudness on export and reports what it did', async () => {
+    await rescan();
+    await tickRow('Good Two.aif');
+    await clickXp(XP.button('Edit & export…'));
+    await find("//div[@aria-label='Editor']");
+    await clickXp("//div[@aria-label='Editor']//label[.//b[normalize-space()='AIFF']]/input"); // the MP3 test left MP3 selected
+    await clickXp("//div[@aria-label='Editor']//button[@role='tab'][contains(.,'Loudness')]");
+    // The loudness graph appears under the waveform (the timeline gets taller) and measures the recording.
+    const timeline = await find("//canvas[@data-testid='timeline']");
+    await driver.wait(async () => /height:\s*272px/.test((await timeline.getAttribute('style')) ?? ''), 10000, 'the loudness lane to appear');
+    await clickXp("//div[@aria-label='Editor']//label[contains(.,'Match a loudness')]/input");
+    const target = await find("//input[@id='lufs']");
+    await target.clear();
+    await target.sendKeys('-20');
+    // The preview is measured and planned by the real backend, and says what it is doing.
+    await untilText(/Playing with it on: the recording measures/i, 20000);
+    const before = new Set(dirFiles());
+    await clickXp("//div[@aria-label='Editor']" + XP.button('Export'));
+    await untilText(/Exported .*\.aif\. Loudness -(19\.[89]|20\.[0-2]) LUFS/i, 30000);
+
+    const added = dirFiles().filter((f) => !before.has(f) && f.endsWith('.aif'));
+    assert.equal(added.length, 1, `exactly one new .aif (got ${added.join(', ')})`);
+    const out = readAiff(join(work, added[0]));
+    const orig = readAiff(files.good2);
+    assert.equal(out.frames, orig.frames, 'same length');
+    // The middle of the file: the editor still has the fade from the earlier test.
+    const peak = (b) => Math.max(...Array.from({ length: 4000 }, (_, i) => Math.abs(sampleAt(b, Math.round(1.2 * RATE) + i))));
+    const [was, now] = [peak(orig.bytes), peak(out.bytes)];
+    assert.ok(now < was * 0.5 && now > was * 0.1, `quieter by roughly 11 dB (${was} -> ${now})`);
   });
 });

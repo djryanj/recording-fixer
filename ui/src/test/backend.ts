@@ -116,7 +116,10 @@ export function installBackend(invoke: Mock, cfg: BackendConfig = {}): Backend {
       case 'plan_info':
         return { total_frames: 1, duration_secs: 4000, bytes: 1_000_000, format: '44100 Hz, 16-bit, 2 ch', fits_aiff: true };
       case 'export_audio':
-        return `${args.job.output_dir}/${args.job.file_stem}.out`;
+        return {
+          path: `${args.job.output_dir}/${args.job.file_stem}.out`,
+          summary: args.job.loudness ? 'Loudness -14.0 LUFS (was -19.6), peak -1.0 dBTP; the limiter did not need to act' : null,
+        };
       case 'ensure_peaks':
         return { frames: 1 };
       case 'get_peaks': {
@@ -162,7 +165,13 @@ export function installBackend(invoke: Mock, cfg: BackendConfig = {}): Backend {
         P().loaded = true;
         P().duration_secs = backend.durationOverride ?? clips.length * 100;
         P().position_secs = args.startSecs as number;
-        return { duration_secs: P().duration_secs, total_frames: 1, rate: 44100, channels: 2, bits: 16 };
+        return {
+          duration_secs: P().duration_secs,
+          total_frames: 1,
+          rate: 44100,
+          channels: 2,
+          bits: 16,
+        };
       }
       case 'audio_play':
         P().playing = true;
@@ -178,6 +187,17 @@ export function installBackend(invoke: Mock, cfg: BackendConfig = {}): Backend {
         return null;
       case 'audio_state':
         return { ...P() };
+      case 'loudness_plan':
+        return { input_lufs: -19.6, static_gain_db: 5.6, gain_min_db: 3.4, gain_max_db: 9.0, gain_db: Array.from({ length: 11 }, (_, i) => 5 + (i % 4)) };
+      case 'ensure_loudness':
+        return null;
+      case 'get_loudness': {
+        // A step in the middle, so a test can see the graph follow the data.
+        const n = args.width as number;
+        const out = new Float32Array(n);
+        for (let i = 0; i < n; i++) out[i] = i < n / 2 ? -24 : -18;
+        return out.buffer;
+      }
       case 'cancel_job':
       case 'reveal_in_folder':
         return null;

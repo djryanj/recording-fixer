@@ -4,9 +4,11 @@
   import { appVersion, ISSUES_URL, openLink, PRIVACY_URL, REPO_URL } from './about';
   import { api, type UpdateInfo } from './api';
   import { checkForUpdate, setUpdateChecks, updateChecksEnabled } from './updates';
-  import { clampFade, defaultFormat, encoderLabel, sanitizeFormat, type FormatState } from './exportOptions';
+  import { clampFade, defaultFormat, encoderLabel, sanitizeFormat, sanitizeLoudness, type FormatState, type LoudnessState } from './exportOptions';
   import { loadSavedExport, patchSavedExport } from './exportSettings';
+  import FadesPanel from './FadesPanel.svelte';
   import FormatPanel from './FormatPanel.svelte';
+  import LoudnessPanel from './LoudnessPanel.svelte';
 
   interface Props {
     tool: ToolStatus | null;
@@ -66,11 +68,13 @@
   let format = $state<FormatState>(sanitizeFormat({ ...defaultFormat(tool), ...saved.format }, tool));
   let fadeIn = $state<number | null>(saved.fadeIn ?? 0);
   let fadeOut = $state<number | null>(saved.fadeOut ?? 0);
+  // svelte-ignore state_referenced_locally
+  let loudness = $state<LoudnessState>(sanitizeLoudness(saved.loudness));
 
   // Save only when something is changed here, not just for opening the window.
   let untouched = true;
   $effect(() => {
-    const patch = { format: $state.snapshot(format), fadeIn: clampFade(fadeIn), fadeOut: clampFade(fadeOut) };
+    const patch = { format: $state.snapshot(format), fadeIn: clampFade(fadeIn), fadeOut: clampFade(fadeOut), loudness: $state.snapshot(loudness) };
     if (untouched) {
       untouched = false;
       return;
@@ -88,7 +92,18 @@
     <section aria-label="Default export">
       <h3 class="label">Default export</h3>
       <p class="why">What a new export starts with. You can still change it for any one export in the editor, which then remembers what you used last.</p>
-      <FormatPanel bind:format bind:fadeIn bind:fadeOut {tool} durationSecs={null} aiffBytes={null} onlocate={onchoose} />
+      <FormatPanel bind:format {tool} durationSecs={null} aiffBytes={null} onlocate={onchoose} />
+    </section>
+
+    <section aria-label="Default fades">
+      <h3 class="label">Default fades</h3>
+      <FadesPanel bind:fadeIn bind:fadeOut />
+    </section>
+
+    <section aria-label="Default loudness">
+      <h3 class="label">Default loudness</h3>
+      <p class="why">Whether new exports change the loudness. Off keeps the audio exactly as recorded.</p>
+      <LoudnessPanel bind:loudness />
     </section>
 
     <section aria-label="ffmpeg">

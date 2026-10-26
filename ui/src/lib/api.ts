@@ -84,6 +84,21 @@ export interface RepairResult {
   error: string | null;
 }
 
+/** Loudness maximizer settings for one export; null leaves the audio untouched. */
+export interface LoudnessJob {
+  /** "lufs": reach a loudness, evening out as chosen. "peak": raise the whole thing until its highest peak meets the limit. */
+  mode: 'lufs' | 'peak';
+  lufs: number;
+  ceiling_db: number;
+  leveling: 'off' | 'gentle' | 'medium' | 'strong';
+}
+
+export interface ExportOutcome {
+  path: string;
+  /** One sentence on what the loudness processing did, when it ran. */
+  summary: string | null;
+}
+
 export interface ExportJob {
   clips: Clip[];
   target: Target;
@@ -95,6 +110,7 @@ export interface ExportJob {
   /** Fade in over the start and out over the end of the result, in seconds (0 = none). */
   fade_in_secs: number;
   fade_out_secs: number;
+  loudness: LoudnessJob | null;
 }
 
 export interface Progress {
@@ -134,6 +150,25 @@ export interface LoadInfo {
   rate: number;
   channels: number;
   bits: number;
+  /** Present when the audio is being played through the loudness processing. */
+  loudness?: PreviewInfo | null;
+}
+
+/** What the loudness plan for the preview came to. */
+export interface PreviewInfo {
+  input_lufs: number;
+  static_gain_db: number;
+  gain_min_db: number;
+  gain_max_db: number;
+  /** The planned gain at the start of each second of the edit list, for the graph. */
+  gain_db: number[];
+}
+
+export interface PeaksProgress {
+  path: string;
+  /** Frames analysed so far / in all. */
+  done: number;
+  total: number;
 }
 
 export interface PlaybackState {
@@ -168,7 +203,7 @@ export const api = {
   audioDevices: () => invoke<AudioDevice[]>('audio_devices'),
   audioDeviceDetails: (id: string) => invoke<AudioDevice | null>('audio_device_details', { id }),
   audioSetDevice: (selection: DeviceSelection) => invoke<OpenedDevice>('audio_set_device', { selection }),
-  audioLoad: (clips: Clip[], startSecs: number) => invoke<LoadInfo>('audio_load', { clips, startSecs }),
+  audioLoad: (clips: Clip[], startSecs: number, loudness: LoudnessJob | null = null) => invoke<LoadInfo>('audio_load', { clips, startSecs, loudness }),
   audioPlay: () => invoke<void>('audio_play'),
   audioPause: () => invoke<void>('audio_pause'),
   audioSeek: (secs: number) => invoke<void>('audio_seek', { secs }),
@@ -179,7 +214,7 @@ export const api = {
   repair: (paths: string[], inPlace: boolean) => invoke<RepairResult[]>('repair', { paths, inPlace }),
   toolStatus: (userPath: string | null) => invoke<ToolStatus>('tool_status', { userPath }),
   planInfo: (clips: Clip[]) => invoke<PlanInfo>('plan_info', { clips }),
-  exportAudio: (job: ExportJob) => invoke<string>('export_audio', { job }),
+  exportAudio: (job: ExportJob) => invoke<ExportOutcome>('export_audio', { job }),
   ensurePeaks: (path: string) => invoke<{ frames: number }>('ensure_peaks', { path }),
   /** `width` columns of [min, max] signed bytes for frames [start, end). */
   getPeaks: async (path: string, start: number, end: number, width: number) =>
@@ -190,7 +225,15 @@ export const api = {
   logLocation: () => invoke<string>('log_location'),
   readLog: () => invoke<string>('read_log'),
   logUi: (level: 'error' | 'warn' | 'info', message: string) => invoke<void>('log_ui', { level, message }),
+  /** What the loudness processing comes to for an edit list: overall gain, its range, and the gain over time. */
+  loudnessPlan: (clips: Clip[], loudness: LoudnessJob) => invoke<PreviewInfo>('loudness_plan', { clips, loudness }),
+  /** Measure the recordings' loudness (first time only); resolves when all are done. */
+  ensureLoudness: (paths: string[]) => invoke<void>('ensure_loudness', { paths }),
+  /** Short-term loudness in LUFS as `width` columns across frames [start, end) of one recording. Empty if not measured yet. */
+  getLoudness: async (path: string, start: number, end: number, width: number) => new Float32Array(await invoke<ArrayBuffer>('get_loudness', { path, start, end, width })),
   cancelJob: () => invoke<void>('cancel_job'),
   reveal: (path: string) => invoke<void>('reveal_in_folder', { path }),
+  onLoudnessProgress: (fn: (p: PeaksProgress) => void) => listen<PeaksProgress>('loudness-progress', (e) => fn(e.payload)),
+  onPeaksProgress: (fn: (p: PeaksProgress) => void) => listen<PeaksProgress>('peaks-progress', (e) => fn(e.payload)),
   onProgress: (fn: (p: Progress) => void) => listen<Progress>('job-progress', (e) => fn(e.payload)),
 };

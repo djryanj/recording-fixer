@@ -3,9 +3,19 @@ import { render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const h = vi.hoisted(() => ({ invoke: vi.fn(), open: vi.fn() }));
+const h = vi.hoisted(() => ({
+  invoke: vi.fn(),
+  open: vi.fn(),
+  /** Handlers the app registered for backend events, by name. */
+  events: {} as Record<string, (e: { payload: unknown }) => void>,
+}));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: h.invoke }));
-vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn(async (name: string, cb: (e: { payload: unknown }) => void) => {
+    h.events[name] = cb;
+    return () => {};
+  }),
+}));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: h.open, save: vi.fn() }));
 
 import App from './App.svelte';
@@ -205,8 +215,10 @@ describe('exporting from the list', () => {
     await u.click(within(rowFor('Serato Recording 2.aif')).getByRole('checkbox'));
     await u.click(screen.getByRole('button', { name: 'Edit & export…' }));
     const editor = await screen.findByRole('dialog', { name: 'Editor' });
+    await u.click(within(editor).getByRole('tab', { name: /Fades/ }));
     await u.type(within(editor).getByLabelText('Fade in (seconds)'), '2');
     await u.type(within(editor).getByLabelText('Fade out (seconds)'), '5');
+    await u.click(within(editor).getByRole('tab', { name: /Format/ }));
     await u.click(within(editor).getByRole('radio', { name: /MP3/ }));
     await u.click(within(editor).getByRole('button', { name: 'Export' }));
     await waitFor(() => expect(backend.of('export_audio')).toHaveLength(1));
@@ -346,6 +358,7 @@ describe('previewing from the list', () => {
     expect(backend.of('audio_load')[0]).toEqual({
       clips: [{ path: 'C:/rec/Serato Recording 2.aif', start_frame: 0, end_frame: null }],
       startSecs: 0,
+      loudness: null,
     });
     // The transport reflects what is loaded.
     expect(await screen.findByRole('button', { name: 'Pause Serato Recording 2.aif' })).toBeInTheDocument();
@@ -441,6 +454,7 @@ describe('Settings (export defaults and ffmpeg)', () => {
     const editor = await screen.findByRole('dialog', { name: 'Editor' });
     expect(within(editor).getByRole('radio', { name: /MP3/ })).toBeChecked();
     expect(within(editor).getByLabelText('Quality')).toHaveValue('0');
+    await u.click(within(editor).getByRole('tab', { name: /Fades/ }));
     expect(within(editor).getByLabelText('Fade in (seconds)')).toHaveValue(2);
   });
 
@@ -639,5 +653,179 @@ describe('updates and troubleshooting', () => {
     await u.click(within(sec).getByRole('button', { name: 'Copy log to clipboard' }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining('starting')));
     expect(sec).toHaveTextContent('Copied');
+  });
+});
+
+describe('loudness maximizer', () => {
+  async function openEditor(u: ReturnType<typeof user>) {
+    await u.click(within(rowFor('Serato Recording 2.aif')).getByRole('checkbox'));
+    await u.click(screen.getByRole('button', { name: 'Edit & export…' }));
+    return screen.findByRole('dialog', { name: 'Editor' });
+  }
+  /** The loudness controls live on their own tab of the editor. */
+  async function loudnessTab(u: ReturnType<typeof user>, editor: HTMLElement) {
+    await u.click(within(editor).getByRole('tab', { name: /Loudness/ }));
+    return within(editor).getByRole('group', { name: 'Loudness' });
+  }
+  const sentJob = () => (backend.of('export_audio')[0] as { job: Record<string, unknown> }).job;
+
+  it('leaves the audio alone unless asked', async () => {
+    const u = user();
+    await mount();
+    const editor = await openEditor(u);
+    // Not among the format and quality choices.
+    expect(within(editor).queryByRole('group', { name: 'Loudness' })).toBeNull();
+    const group = await loudnessTab(u, editor);
+    expect(within(group).getByRole('radio', { name: 'Leave as recorded' })).toBeChecked();
+    expect(within(group).queryByLabelText('Target loudness')).toBeNull();
+    await u.click(within(editor).getByRole('button', { name: 'Export' }));
+    await waitFor(() => expect(backend.of('export_audio')).toHaveLength(1));
+    expect(sentJob().loudness).toBeNull();
+  });
+
+  it('matches a loudness with the chosen evening out and limit, and says what it did', async () => {
+    const u = user();
+    await mount();
+    const editor = await openEditor(u);
+    const group = await loudnessTab(u, editor);
+    await u.click(within(group).getByRole('radio', { name: 'Match a loudness' }));
+    await u.click(within(group).getByRole('button', { name: 'Quieter −16' }));
+    await u.selectOptions(within(group).getByLabelText('Evening out'), 'strong');
+    const limit = within(group).getByLabelText('Peak limit');
+    await u.clear(limit);
+    await u.type(limit, '-1.5');
+    await u.click(within(editor).getByRole('button', { name: 'Export' }));
+    await waitFor(() => expect(backend.of('export_audio')).toHaveLength(1));
+    expect(sentJob().loudness).toEqual({ mode: 'lufs', lufs: -16, ceiling_db: -1.5, leveling: 'strong' });
+    expect(await screen.findByText(/Exported Serato Recording 2.out. Loudness -14.0 LUFS/)).toBeInTheDocument();
+  });
+
+  it('peak mode asks only for the limit and sends no evening out', async () => {
+    const u = user();
+    await mount();
+    const editor = await openEditor(u);
+    const group = await loudnessTab(u, editor);
+    await u.click(within(group).getByRole('radio', { name: 'Raise to a peak limit' }));
+    expect(within(group).queryByLabelText('Evening out')).toBeNull();
+    const limit = within(group).getByLabelText('Peak limit');
+    await u.clear(limit);
+    await u.type(limit, '-0.1');
+    await u.click(within(editor).getByRole('button', { name: 'Export' }));
+    await waitFor(() => expect(backend.of('export_audio')).toHaveLength(1));
+    expect(sentJob().loudness).toMatchObject({ mode: 'peak', ceiling_db: -0.1, leveling: 'off' });
+  });
+
+  it('is remembered between exports and shared with Settings', async () => {
+    const u = user();
+    await mount();
+    await u.click(screen.getByRole('button', { name: /Settings/ }));
+    const d = await screen.findByRole('dialog', { name: 'Settings' });
+    await u.click(within(within(d).getByRole('group', { name: 'Loudness' })).getByRole('radio', { name: 'Match a loudness' }));
+    expect(JSON.parse(localStorage.getItem('exportSettings.v1')!).loudness).toMatchObject({ mode: 'lufs', lufs: -14 });
+    await u.click(screen.getByRole('button', { name: 'Done' }));
+    const editor = await openEditor(u);
+    expect(within(await loudnessTab(u, editor)).getByRole('radio', { name: 'Match a loudness' })).toBeChecked();
+  });
+
+  const loadsWith = () => backend.of('audio_load').map((a) => a.loudness);
+
+  it('plays the editor preview through the processing when it is on, and says what it is doing', async () => {
+    const u = user();
+    await mount();
+    const editor = await openEditor(u);
+    await waitFor(() => expect(loadsWith().length).toBeGreaterThan(0));
+    expect(loadsWith().at(-1)).toBeNull(); // off: the original
+
+    const group = await loudnessTab(u, editor);
+    await u.click(within(group).getByRole('radio', { name: 'Match a loudness' }));
+    await waitFor(() => expect(loadsWith().at(-1)).toEqual({ mode: 'lufs', lufs: -14, ceiling_db: -1, leveling: 'medium' }));
+    const note = await within(group).findByText(/Playing with it on/);
+    expect(note).toHaveTextContent('−19.6 LUFS');
+    expect(note).toHaveTextContent('+5.6 dB');
+    expect(note).toHaveTextContent('between +3.4 dB and +9.0 dB');
+  });
+
+  it('changing the target while listening reloads the preview with it', async () => {
+    const u = user();
+    await mount();
+    const editor = await openEditor(u);
+    const group = await loudnessTab(u, editor);
+    await u.click(within(group).getByRole('radio', { name: 'Match a loudness' }));
+    await u.click(within(group).getByRole('button', { name: 'Louder −11' }));
+    await waitFor(() => expect(loadsWith().at(-1)).toMatchObject({ lufs: -11 }));
+  });
+
+  it('can be switched off in the preview to compare with the original, without changing the export', async () => {
+    const u = user();
+    await mount();
+    const editor = await openEditor(u);
+    const group = await loudnessTab(u, editor);
+    await u.click(within(group).getByRole('radio', { name: 'Match a loudness' }));
+    await waitFor(() => expect(loadsWith().at(-1)).not.toBeNull());
+    await u.click(within(group).getByRole('checkbox', { name: /Hear this when playing/ }));
+    await waitFor(() => expect(loadsWith().at(-1)).toBeNull());
+    // The export still carries the setting.
+    await u.click(within(editor).getByRole('button', { name: 'Export' }));
+    await waitFor(() => expect(backend.of('export_audio')).toHaveLength(1));
+    expect(sentJob().loudness).toMatchObject({ mode: 'lufs' });
+  });
+
+  it('shows how far the first measurement has got, and plays the original until it is done', async () => {
+    const u = user();
+    await mount();
+    const editor = await openEditor(u);
+    const group = await loudnessTab(u, editor);
+    // Hold the measurement open, as the first look at a long recording does.
+    const real = h.invoke.getMockImplementation()!;
+    let finish!: () => void;
+    h.invoke.mockImplementation((cmd: string, args: Record<string, unknown>) =>
+      cmd === 'ensure_loudness' ? new Promise((r) => (finish = () => r(null))) : real(cmd, args),
+    );
+    await u.click(within(group).getByRole('radio', { name: 'Match a loudness' }));
+    const path = 'C:/rec/Serato Recording 2.aif';
+    h.events['loudness-progress']({ payload: { path, done: 25, total: 100 } });
+    const bar = await within(group).findByRole('progressbar', { name: 'Measuring loudness' });
+    expect(bar).toHaveValue(25);
+    expect(group).toHaveTextContent('Measuring loudness of Serato Recording 2.aif 25%');
+    // Meanwhile the original is playing: the processed sound is loaded only once the measurement ends.
+    await waitFor(() => expect(loadsWith().at(-1)).toBeNull());
+    expect(loadsWith().filter((l) => l !== null)).toHaveLength(0);
+    h.events['loudness-progress']({ payload: { path, done: 100, total: 100 } });
+    finish();
+    await within(group).findByText(/Playing with it on/);
+    expect(within(group).queryByRole('progressbar')).toBeNull();
+    expect(loadsWith().at(-1)).toMatchObject({ mode: 'lufs' });
+  });
+
+  it('asks for the recordings to be measured when the Loudness tab is open, even with it switched off, so the graph can show', async () => {
+    const u = user();
+    await mount();
+    const editor = await openEditor(u);
+    expect(backend.of('ensure_loudness')).toHaveLength(0); // not needed until the tab is looked at
+    await loudnessTab(u, editor);
+    await waitFor(() => expect(backend.of('ensure_loudness').at(-1)).toEqual({ paths: ['C:/rec/Serato Recording 2.aif'] }));
+    // And the graph asks for the data.
+    await waitFor(() => expect(backend.of('get_loudness').length).toBeGreaterThan(0));
+  });
+
+  it('still shows the plan and the graph when nothing can be played (no audio device)', async () => {
+    const u = user();
+    await mount();
+    const editor = await openEditor(u);
+    backend.fail('audio_load', 'no default audio output device');
+    const group = await loudnessTab(u, editor);
+    await u.click(within(group).getByRole('radio', { name: 'Match a loudness' }));
+    const note = await within(group).findByText(/Playing with it on/);
+    expect(note).toHaveTextContent('+5.6 dB');
+    expect(within(group).queryByText(/could not use this/)).toBeNull();
+  });
+
+  it('says so when the preview cannot use the setting', async () => {
+    const u = user();
+    await mount({ failures: { loudness_plan: 'the clips do not share one audio format' } });
+    const editor = await openEditor(u);
+    const group = await loudnessTab(u, editor);
+    await u.click(within(group).getByRole('radio', { name: 'Match a loudness' }));
+    expect(await within(group).findByText(/could not use this: the clips do not share one audio format/)).toBeInTheDocument();
   });
 });

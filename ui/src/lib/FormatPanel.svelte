@@ -17,12 +17,9 @@
     tool: ToolStatus | null;
     durationSecs: number | null;
     aiffBytes: number | null;
-    /** Fade lengths in seconds; `null` while the field is empty. */
-    fadeIn: number | null;
-    fadeOut: number | null;
     onlocate: () => void;
   }
-  let { format = $bindable(), tool, durationSecs, aiffBytes, fadeIn = $bindable(), fadeOut = $bindable(), onlocate }: Props = $props();
+  let { format = $bindable(), tool, durationSecs, aiffBytes, onlocate }: Props = $props();
 
   const ffmpegOk = $derived(!!tool?.ffmpeg_path);
   const mp3Ok = $derived(ffmpegOk && !!tool?.mp3);
@@ -119,13 +116,6 @@
     <p class="err">This ffmpeg build has no MP3 encoder (libmp3lame).</p>
   {/if}
 
-  <div class="fades">
-    <span class="label">Fades</span>
-    <label>In <input class="mono" type="number" min="0" max="60" step="0.5" placeholder="0" bind:value={fadeIn} aria-label="Fade in (seconds)" /> <span class="muted">s</span></label>
-    <label>Out <input class="mono" type="number" min="0" max="60" step="0.5" placeholder="0" bind:value={fadeOut} aria-label="Fade out (seconds)" /> <span class="muted">s</span></label>
-    <span class="hint">Applied to the start and end of each exported file, in every format.</span>
-  </div>
-
   {#if estimate != null}
     <p class="muted est">Estimated size: about {formatSize(estimate)}</p>
   {/if}
@@ -156,22 +146,6 @@
   }
   .check {
     white-space: nowrap;
-  }
-  .fades {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px 16px;
-    padding-top: 10px;
-    border-top: 1px solid var(--line);
-  }
-  .fades label {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .fades input {
-    width: 74px;
   }
   .hint,
   .est {

@@ -1,4 +1,4 @@
-import type { Target, ToolStatus } from './api';
+import type { LoudnessJob, Target, ToolStatus } from './api';
 
 export type Kind = 'aiff' | 'mp3' | 'aac';
 
@@ -95,6 +95,66 @@ export function sanitizeFormat(s: FormatState, tool: ToolStatus | null): FormatS
   if (out.kind === 'mp3' && !(tool?.ffmpeg_path && tool.mp3)) out.kind = 'aiff';
   if (out.kind === 'aac' && !(tool?.ffmpeg_path && available.length > 0)) out.kind = 'aiff';
   return out;
+}
+
+export type LevelingChoice = 'off' | 'gentle' | 'medium' | 'strong';
+
+/** The loudness section of the export options. Numbers are `null` while their field is empty. */
+export interface LoudnessState {
+  mode: 'off' | 'lufs' | 'peak';
+  /** Target integrated loudness in LUFS. */
+  lufs: number | null;
+  /** True-peak limit in dBTP. */
+  ceiling: number | null;
+  leveling: LevelingChoice;
+  /** Play the editor's preview through the processing, to hear what the export will do. */
+  preview: boolean;
+}
+
+export const LEVELING_CHOICES: { value: LevelingChoice; label: string }[] = [
+  { value: 'off', label: 'None: one steady gain for the whole set' },
+  { value: 'gentle', label: 'Gentle' },
+  { value: 'medium', label: 'Medium (recommended)' },
+  { value: 'strong', label: 'Strong' },
+];
+
+/** Common targets, as buttons next to the number. */
+export const LUFS_PRESETS = [
+  { lufs: -14, label: 'Streaming −14' },
+  { lufs: -16, label: 'Quieter −16' },
+  { lufs: -11, label: 'Louder −11' },
+];
+
+export const defaultLoudness = (): LoudnessState => ({ mode: 'off', lufs: -14, ceiling: -1, leveling: 'medium', preview: true });
+
+/** Fill in anything a saved value lacks, and drop anything that is not valid. */
+export function sanitizeLoudness(s: Partial<LoudnessState> | undefined): LoudnessState {
+  const d = defaultLoudness();
+  if (!s) return d;
+  return {
+    mode: s.mode === 'lufs' || s.mode === 'peak' ? s.mode : 'off',
+    lufs: typeof s.lufs === 'number' && Number.isFinite(s.lufs) ? s.lufs : d.lufs,
+    ceiling: typeof s.ceiling === 'number' && Number.isFinite(s.ceiling) ? s.ceiling : d.ceiling,
+    leveling: LEVELING_CHOICES.some((c) => c.value === s.leveling) ? (s.leveling as LevelingChoice) : d.leveling,
+    preview: s.preview !== false,
+  };
+}
+
+const round1 = (v: number) => Math.round(v * 10) / 10;
+
+/** A target loudness from a form field: finite, between -40 and -3 LUFS. */
+export function clampLufs(v: number | null | undefined): number {
+  return typeof v === 'number' && Number.isFinite(v) ? round1(Math.min(-3, Math.max(-40, v))) : -14;
+}
+
+/** A true-peak limit from a form field: finite, between -20 and 0 dBTP. */
+export function clampCeiling(v: number | null | undefined): number {
+  return typeof v === 'number' && Number.isFinite(v) ? round1(Math.min(0, Math.max(-20, v))) : -1;
+}
+
+export function buildLoudness(s: LoudnessState): LoudnessJob | null {
+  if (s.mode === 'off') return null;
+  return { mode: s.mode, lufs: clampLufs(s.lufs), ceiling_db: clampCeiling(s.ceiling), leveling: s.mode === 'peak' ? 'off' : s.leveling };
 }
 
 export const MAX_FADE_SECS = 60;

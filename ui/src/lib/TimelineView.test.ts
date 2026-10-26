@@ -3,9 +3,18 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const h = vi.hoisted(() => ({ invoke: vi.fn() }));
+const h = vi.hoisted(() => ({
+  invoke: vi.fn(),
+  /** Handlers the component registered for backend events, by event name. */
+  events: {} as Record<string, (e: { payload: unknown }) => void>,
+}));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: h.invoke }));
-vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn(async (name: string, cb: (e: { payload: unknown }) => void) => {
+    h.events[name] = cb;
+    return () => {};
+  }),
+}));
 
 import Timeline from './Timeline.svelte';
 import Harness from '../test/TimelineHarness.svelte';
@@ -489,5 +498,100 @@ describe('timeline drawing and waveform data', () => {
     expect(backend.calls.filter((c) => c.cmd === 'get_peaks')).toHaveLength(0);
     release();
     await waitFor(() => expect(backend.calls.some((c) => c.cmd === 'get_peaks')).toBe(true), { timeout: 3000 });
+  });
+
+  describe('while a waveform is still being built', () => {
+    const texts = () => (globalThis as unknown as { __canvasCalls: { fn: string; args: unknown[] }[] }).__canvasCalls.filter((c) => c.fn === 'fillText').map((c) => String(c.args[0]));
+
+    async function startBuilding() {
+      let release!: () => void;
+      h.invoke.mockReset();
+      backend = installBackend(h.invoke);
+      const real = h.invoke.getMockImplementation()!;
+      h.invoke.mockImplementation((cmd: string, args: Record<string, unknown>) =>
+        cmd === 'ensure_peaks' ? new Promise((r) => (release = () => r({ frames: 1 }))) : real(cmd, args),
+      );
+      render(Timeline, { clips: [clip(1, 100)], selectedId: null, playheadSecs: 0, playing: false, pxPerSec: 1, onselect: vi.fn(), onseek: vi.fn(), onchange: vi.fn() });
+      await waitFor(() => expect(h.events['peaks-progress']).toBeTypeOf('function'));
+      return release;
+    }
+
+    it('draws what exists so far and shows how far it has got', async () => {
+      await startBuilding();
+      const total = 100 * RATE;
+      h.events['peaks-progress']({ payload: { path: 'C:/rec/1.aif', done: total / 4, total } });
+      // Only the finished quarter is requested, never beyond what the backend has made.
+      await waitFor(() => expect(backend.calls.some((c) => c.cmd === 'get_peaks')).toBe(true), { timeout: 3000 });
+      const asked = backend.of('get_peaks')[0] as { start: number; end: number };
+      expect(asked.start).toBe(0);
+      expect(asked.end).toBe(total / 4);
+      await waitFor(() => expect(texts().some((t) => t.includes('building waveform 25%'))).toBe(true));
+    });
+
+    it('keeps drawing further as more arrives, then the full waveform when it is done', async () => {
+      const release = await startBuilding();
+      const total = 100 * RATE;
+      const progress = (done: number) => h.events['peaks-progress']({ payload: { path: 'C:/rec/1.aif', done, total } });
+      progress(total / 4);
+      await waitFor(() => expect(backend.of('get_peaks')).toHaveLength(1), { timeout: 3000 });
+      progress(total / 2);
+      await waitFor(() => expect(backend.of('get_peaks').some((a) => (a as { end: number }).end === total / 2)).toBe(true), { timeout: 3000 });
+      await waitFor(() => expect(texts().some((t) => t.includes('building waveform 50%'))).toBe(true));
+      release();
+      await waitFor(() => expect(backend.of('get_peaks').some((a) => (a as { end: number }).end === total)).toBe(true), { timeout: 3000 });
+      await waitFor(() => expect(texts().at(-1)).not.toContain('building waveform'));
+    });
+  });
+
+  describe('the loudness graph', () => {
+    const texts = () => (globalThis as unknown as { __canvasCalls: { fn: string; args: unknown[] }[] }).__canvasCalls.filter((c) => c.fn === 'fillText').map((c) => String(c.args[0]));
+    const lane = (loudness: { gainDb: number[] | null; target: number | null; version: number } | null) => {
+      backend = installBackend(h.invoke);
+      return render(Timeline, { clips: [clip(1, 100)], selectedId: null, playheadSecs: 0, playing: false, loudness, pxPerSec: 1, onselect: vi.fn(), onseek: vi.fn(), onchange: vi.fn() });
+    };
+
+    it('is not there, and costs nothing, unless asked for', async () => {
+      lane(null);
+      await tick();
+      await new Promise((r) => setTimeout(r, 150));
+      expect(canvas().style.height).toBe('182px');
+      expect(backend.calls.some((c) => c.cmd === 'get_loudness')).toBe(false);
+      expect(texts().some((t) => t.includes('LOUDNESS'))).toBe(false);
+    });
+
+    it('adds a lane under the waveform and fetches the loudness of what is in view', async () => {
+      lane({ gainDb: null, target: null, version: 1 });
+      await waitFor(() => expect(backend.calls.some((c) => c.cmd === 'get_loudness')).toBe(true), { timeout: 3000 });
+      expect(canvas().style.height).toBe('272px');
+      const asked = backend.of('get_loudness')[0] as { path: string; start: number; end: number; width: number };
+      expect(asked.path).toBe('C:/rec/1.aif');
+      expect(asked.start).toBe(0);
+      expect(asked.end).toBeGreaterThan(50 * RATE);
+      expect(asked.width).toBeGreaterThan(8);
+      await waitFor(() => expect(texts().some((t) => t.startsWith('LOUDNESS, 3 s AVERAGE'))).toBe(true));
+      // Only the as-recorded line until there is a plan.
+      expect(texts().some((t) => t.includes('amber after'))).toBe(false);
+      const strokes = (globalThis as unknown as { __canvasCalls: { fn: string }[] }).__canvasCalls.filter((c) => c.fn === 'stroke').length;
+      expect(strokes).toBeGreaterThan(0);
+    });
+
+    it('also draws what the processing will make of it, and the target', async () => {
+      lane({ gainDb: [5, 6, 7], target: -14, version: 1 });
+      await waitFor(() => expect(texts().some((t) => t.includes('grey as recorded, amber after'))).toBe(true), { timeout: 3000 });
+      expect(texts().some((t) => t === 'target -14 LUFS')).toBe(true);
+    });
+
+    it('fills in as the measurement runs, asking only for what has been measured', async () => {
+      lane({ gainDb: null, target: null, version: 0 });
+      await waitFor(() => expect(h.events['loudness-progress']).toBeTypeOf('function'));
+      backend.calls.length = 0;
+      h.events['loudness-progress']({ payload: { path: 'C:/rec/1.aif', done: 40 * RATE, total: 100 * RATE } });
+      await waitFor(() => expect(backend.calls.some((c) => c.cmd === 'get_loudness')).toBe(true), { timeout: 3000 });
+      expect((backend.of('get_loudness')[0] as { end: number }).end).toBe(40 * RATE);
+      await waitFor(() => expect(texts().some((t) => t.includes('measuring loudness 40%'))).toBe(true));
+      backend.calls.length = 0;
+      h.events['loudness-progress']({ payload: { path: 'C:/rec/1.aif', done: 100 * RATE, total: 100 * RATE } });
+      await waitFor(() => expect(backend.of('get_loudness').some((a) => (a as { end: number }).end > 90 * RATE)).toBe(true), { timeout: 3000 });
+    });
   });
 });
