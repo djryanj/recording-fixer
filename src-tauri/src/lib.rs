@@ -1168,6 +1168,24 @@ async fn get_loudness(
     .map_err(|e| e.to_string())?
 }
 
+/// What the loudness processing comes to for an edit list, without involving the audio device:
+/// the editor shows this (and its graph) even where nothing can be played.
+#[tauri::command]
+async fn loudness_plan(
+    app: AppHandle,
+    store: State<'_, Arc<LoudnessStore>>,
+    clips: Vec<ClipDto>,
+    loudness: LoudnessDto,
+) -> Result<PreviewInfo, String> {
+    let store = store.inner().clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        preview_processing(&app, &store, &to_clips(&clips), &loudness).map(|(_, info)| info)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    logged("planning the loudness preview", result)
+}
+
 #[derive(Serialize)]
 struct LoadReply {
     #[serde(flatten)]
@@ -1364,6 +1382,7 @@ pub fn run() {
             log_ui,
             ensure_loudness,
             get_loudness,
+            loudness_plan,
             check_for_update
         ])
         .run(tauri::generate_context!())

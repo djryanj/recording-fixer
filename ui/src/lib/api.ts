@@ -225,6 +225,8 @@ export const api = {
   logLocation: () => invoke<string>('log_location'),
   readLog: () => invoke<string>('read_log'),
   logUi: (level: 'error' | 'warn' | 'info', message: string) => invoke<void>('log_ui', { level, message }),
+  /** What the loudness processing comes to for an edit list: overall gain, its range, and the gain over time. */
+  loudnessPlan: (clips: Clip[], loudness: LoudnessJob) => invoke<PreviewInfo>('loudness_plan', { clips, loudness }),
   /** Measure the recordings' loudness (first time only); resolves when all are done. */
   ensureLoudness: (paths: string[]) => invoke<void>('ensure_loudness', { paths }),
   /** Short-term loudness in LUFS as `width` columns across frames [start, end) of one recording. Empty if not measured yet. */

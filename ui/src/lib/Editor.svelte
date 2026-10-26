@@ -165,9 +165,12 @@
             if (cancelled) return;
           }
         }
-        const info = await audio.load(payload, now(), EDITOR_LABEL, job);
+        // What the processing comes to is worked out apart from playback, so the graph and the
+        // numbers appear even where nothing can be played (no audio device).
+        const plan = job ? await api.loudnessPlan(payload, job) : null;
         if (cancelled) return;
-        loudInfo = job ? (info.loudness ?? null) : null;
+        loudInfo = plan;
+        await audio.load(payload, now(), EDITOR_LABEL, job).catch(() => {}); // the transport reports playback problems
       } catch (e) {
         if (cancelled) return;
         loudInfo = null;

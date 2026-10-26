@@ -808,9 +808,21 @@ describe('loudness maximizer', () => {
     await waitFor(() => expect(backend.of('get_loudness').length).toBeGreaterThan(0));
   });
 
+  it('still shows the plan and the graph when nothing can be played (no audio device)', async () => {
+    const u = user();
+    await mount();
+    const editor = await openEditor(u);
+    backend.fail('audio_load', 'no default audio output device');
+    const group = await loudnessTab(u, editor);
+    await u.click(within(group).getByRole('radio', { name: 'Match a loudness' }));
+    const note = await within(group).findByText(/Playing with it on/);
+    expect(note).toHaveTextContent('+5.6 dB');
+    expect(within(group).queryByText(/could not use this/)).toBeNull();
+  });
+
   it('says so when the preview cannot use the setting', async () => {
     const u = user();
-    await mount({ failures: { audio_load: 'the clips do not share one audio format' } });
+    await mount({ failures: { loudness_plan: 'the clips do not share one audio format' } });
     const editor = await openEditor(u);
     const group = await loudnessTab(u, editor);
     await u.click(within(group).getByRole('radio', { name: 'Match a loudness' }));
