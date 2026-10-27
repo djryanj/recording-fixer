@@ -24,6 +24,13 @@ work="${FFMPEG_WORK:-$root/target/ffmpeg-build}"
 jobs="$(sysctl -n hw.ncpu)"
 mkdir -p "$out" "$work"
 
+# FFmpeg's x86 assembly needs nasm. An Apple silicon Mac building the Intel half is the usual case that lacks it.
+if ! command -v nasm >/dev/null 2>&1; then
+  case "${1:-universal}" in
+    x86_64|universal) echo "nasm is needed to build the x86_64 ffmpeg: brew install nasm" >&2; exit 1 ;;
+  esac
+fi
+
 fetch() { # url file sha256
   [ -f "$2" ] || curl -fsSL "$1" -o "$2"
   echo "$3  $2" | shasum -a 256 -c - >/dev/null || { echo "checksum mismatch for $2" >&2; exit 1; }
