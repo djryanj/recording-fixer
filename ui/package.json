@@ -2,7 +2,7 @@
   "name": "recording-fixer-ui",
   "private": true,
   "license": "GPL-3.0-or-later",
-  "version": "0.1.0-rc.1",
+  "version": "0.1.0-rc.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
