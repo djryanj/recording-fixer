@@ -187,10 +187,12 @@ jobs:
           $dir = Join-Path $env:RUNNER_TEMP 'installed-app'
           Start-Process -FilePath $installer -ArgumentList "/S /D=$dir" -Wait
           if (-not (Test-Path $dir)) { throw "not installed where expected: $dir" }
-          $exe = Get-ChildItem $dir -Filter *.exe | Where-Object { $_.Name -notmatch 'uninstall' } | Select-Object -First 1
-          Write-Host "installed: $($exe.FullName)"
           Get-ChildItem $dir | ForEach-Object { Write-Host "  $($_.Name)" }
-          "exe=$($exe.FullName)" | Out-File -Append -FilePath $env:GITHUB_OUTPUT -Encoding utf8
+          # The app itself, by name: the folder also holds ffmpeg.exe and the uninstaller.
+          $exe = Join-Path $dir 'recording-fixer.exe'
+          if (-not (Test-Path $exe)) { throw "the app is not in the install folder: $exe" }
+          Write-Host "installed: $exe"
+          "exe=$exe" | Out-File -Append -FilePath $env:GITHUB_OUTPUT -Encoding utf8
       - name: Tools for the end-to-end suite
         if: runner.os == 'Windows'
         run: cargo install tauri-driver --locked
