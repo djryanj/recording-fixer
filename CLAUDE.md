@@ -129,6 +129,13 @@ Inputs are 0.2–3+ GB each, and users may have dozens. Speed and memory are fir
 
 ## Working agreements
 
+- **Branches: get this right every time.** `main` is protected (pull requests and required checks only), and the editor's Push button pushes the *current branch to whatever it tracks*. A branch created from `origin/main` with the default settings tracks `origin/main`, so the next Push goes to `main` and is rejected (this has happened repeatedly). So:
+  - Create branches with `git switch -c <name> origin/main --no-track` (or `git checkout -B <name> origin/main --no-track`). Never create one from `origin/main` and leave it tracking it.
+  - Name them `type/short-description` (`feat/`, `fix/`, `docs/`, `chore/`, `ci/`).
+  - Before saying a branch is ready, run `git branch -vv`: the branch must have **no upstream, or the same-name branch on origin**, never `origin/main`. If it tracks `main`, fix it with `git branch --unset-upstream`.
+  - Publish with `git push -u origin <name>` (this clone has `push.autoSetupRemote` on, so a plain `git push` also works; it is local git config, not part of the repo). Never run `git push origin <name>:main`, and never push to `main` at all.
+  - Start every branch from a freshly fetched `origin/main` (`git fetch --prune` first); if `main` has moved before a PR is opened, rebase onto it.
+  - Do not commit or push unless asked; when asked to leave things uncommitted, leave them in the working tree on a correctly created branch.
 - **TDD for the core crates.** Write a failing test first, then the code. Fixtures are generated in code (synthetic sine files with zeroed headers). The 220 MB real sample `Serato Recording 5.aif` stays out of git (put it in `.gitignore`). A ~1 MB head slice is the committed golden fixture. UI is tested at the logic level; do not chase pixel TDD.
 - **Never modify user recordings by default.** Repair writes a new file. In-place repair requires an explicit choice and creates a `.bak` unless turned off. Combine/cut is an edit list that is only rendered at export.
 - **Never touch a file Serato is still writing** (open handle or very recent mtime). Treat this as a hard rule, with tests.
