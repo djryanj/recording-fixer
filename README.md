@@ -241,6 +241,10 @@ Installers for Windows and macOS (with ffmpeg included, plus a smaller `no-ffmpe
 
 The app collects no data, ever; see [PRIVACY.md](PRIVACY.md). Its only network use is an optional once-a-day check of GitHub's public release list for a newer version (switch it off in Settings). When something goes wrong, **Settings > Troubleshooting** shows the local log file or copies it, so you can attach it to a bug report; it is never sent anywhere.
 
+## AI Disclosure
+
+This project has been developed with heavy use of Anthropic's Claude Code.
+
 ## License
 
 Free software, **GPL-3.0-or-later**: see [LICENSE](LICENSE). You may use, study, change and share it; anything you distribute based on it must stay under the same license with its source available. It is not for sale and never will be.
