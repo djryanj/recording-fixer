@@ -19,7 +19,6 @@ Why this one: Steinberg's ASIO SDK, compiled into the app for ASIO output, is av
 | Steinberg ASIO SDK (via cpal's `asio-sys`) | GPLv3 or Steinberg proprietary | used under the GPLv3; add the trademark line below |
 | ffmpeg | separate program, run as a subprocess | LGPL build for any bundled copy; ffmpeg's license applies to that binary, not to this code |
 | Apple `CoreAudioToolbox.dll` | Apple | loaded from the user's own install at runtime; never shipped or downloaded |
-| VST3 SDK (stretch goal) | MIT since v3.8 | |
 
 ## Things to keep doing
 
