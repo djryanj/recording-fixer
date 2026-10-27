@@ -1,6 +1,8 @@
 # Recording Fixer for Serato DJ
 
-A small, free, open-source desktop utility (Windows and macOS) for fixing broken recordings made with Serato DJ and combining those recordings. Licensed under the [GNU GPL v3 or later](LICENSE). It is not affiliated with or endorsed by Serato; "Serato" and "Serato DJ" are their trademarks, used here only to say what the tool works with.
+A small, free, open-source desktop utility (Windows and macOS) for fixing broken recordings made with Serato DJ, combining those recordings, and applying some basic post-processing to them so you can listen to them. Licensed under the [GNU GPL v3 or later](LICENSE). It is not affiliated with or endorsed by Serato; "Serato" and "Serato DJ" are their trademarks, used here only to say what the tool works with.
+
+Recording Fixer for Serato DJ is intended to be a one-stop utility to use after your sets to take them from raw recording to a set good enough to listen to afterwards without needing to use a DAW.
 
 **New here? Read the [user guide](docs/USER-GUIDE.md)** (installing, repairing, editing, exporting, loudness).
 
@@ -13,7 +15,15 @@ Found a problem? Please [open an issue](https://github.com/djryanj/recording-fix
 - **Combines** several recordings into one, or splits one into several files.
 - **Exports** to AIFF, MP3 or AAC (.m4a), with choice of bitrate mode and quality, **fade in / fade out**, ID3/MP4 tags, and filename templates.
 
-Early version. VST3 support and mixed-sample-rate joins are not built yet; see [docs/FEATURES.md](docs/FEATURES.md).
+![The recording list: select files, repair the ones that need it, combine and export](docs/images/list.png)
+
+![The editor: a waveform timeline, with the loudness graph underneath and the Loudness settings beside the clip list](docs/images/loudness.png)
+
+Early version. Mixed-sample-rate joins are not built yet; see [docs/FEATURES.md](docs/FEATURES.md).
+
+The pictures use made-up test recordings (kicks, bass and beeps), not real music. The app also has a light theme:
+
+![The recording list in the light theme](docs/images/list-light.png)
 
 ## What goes wrong with Serato recordings
 
@@ -61,16 +71,22 @@ ffmpeg -hide_banner -encoders | grep aac_at
 
 If your ffmpeg lists `aac_at`, the app uses it automatically. If not, use **Locate ffmpeg…** to point at one that does.
 
-**Windows.** Apple does not offer a standalone download of its encoder, and ffmpeg cannot use it on Windows. It lives in `CoreAudioToolbox.dll`, part of _Apple Application Support_, which Apple installs together with **iTunes**. That is also how OBS Studio gets its "CoreAudio AAC" encoder. To have it available:
+**Windows.** Apple does not offer a standalone download of its encoder, and ffmpeg cannot use it on Windows. It lives in `CoreAudioToolbox.dll`, part of _Apple Application Support_, which Apple installs together with **iTunes**. To have it available:
 
 1. Install iTunes for Windows from Apple or the Microsoft Store.
 2. The app looks for the 64-bit `CoreAudioToolbox.dll` in `C:\Program Files\Common Files\Apple\Apple Application Support\` and `C:\Program Files\iTunes\`. When it loads and can create an encoder, the footer reads **"Apple AAC (CoreAudioToolbox)"** and **Apple AAC (CoreAudio)** becomes the default AAC encoder.
 
-**How it works:** the app loads the DLL at runtime (as OBS does) and drives Apple's `AudioConverter` API directly: constant bitrate (up to 320 kbps) or Apple's true VBR in five quality levels. The AAC packets are wrapped in ADTS and ffmpeg muxes them into an `.m4a` without re-encoding, so tags work as usual. It encodes at about 100x realtime. Apple's encoder prepends 2112 samples (about 48 ms) of silence ("priming") that players are meant to skip. The app reads that value from the encoder (as OBS does) and has ffmpeg record it as an edit list, so players that honour it start exactly on time; a test checks that a click 0.5 s into the source decodes at 0.5 s to within 2 ms.
+**How it works:** the app loads the DLL at runtime and drives Apple's `AudioConverter` API directly: constant bitrate (up to 320 kbps) or Apple's true VBR in five quality levels. The AAC packets are wrapped in ADTS and ffmpeg muxes them into an `.m4a` without re-encoding, so tags work as usual. It encodes at about 100x realtime. Apple's encoder prepends 2112 samples (about 48 ms) of silence ("priming") that players are meant to skip. The app reads that value from the encoder and has ffmpeg record it as an edit list, so players that honour it start exactly on time; a test checks that a click 0.5 s into the source decodes at 0.5 s to within 2 ms.
 
 We never bundle or download Apple's DLL; don't fetch it from "DLL download" sites. If the DLL is missing or won't load, the app falls back to the next-best ffmpeg encoder. On Windows with 32-bit-only Apple software the 64-bit DLL won't be present and Apple AAC is unavailable.
 
 You can also get better-than-default AAC by supplying an ffmpeg build that includes `libfdk_aac` (non-free, so it can't be bundled with this app) via **Locate ffmpeg…**.
+
+## What This ISN'T
+
+- **Is this a DAW or audio editor?** - NO. This tool is designed to fulfill a particular workflow need that stems directly from using Serato DJ software to record your sets. Since Serato occasionally produces broken files if you forget to stop the recording, and it also splits your recordings every 3 hours, fixing those broken files, combining multiple files, adding basic polish to the set like a smart audio gain boost, a brief fade in/out, and compressing to a portable format is the entire goal. Although this project appears to have what looks like a Digital Audio Workstation (e.g., DAW) or audio editor in it it is not one and will never be one. The basic features it has for non-destructively moving clips around, sicing clips, fades, etc. are the extent of what is planned. If you need more advanced audio editing or plug-in support, you can use this tool to repair a broken .aif file (if needed) that you can then use in your regular audio editor/DAW to do what you need to with it.
+
+- **Why don't you support more audio formats, like WAV?** - Serato DJ records in .aif, so for now that's all this will support unless Serato decides to start doing things differently.
 
 ## Developer setup
 
@@ -130,22 +146,22 @@ winget install --id Casey.Just -e     # Windows (reopen the terminal afterwards)
 brew install just                     # macOS
 ```
 
-| Recipe              | Does                                                                                       |
-| ------------------- | ------------------------------------------------------------------------------------------ |
-| `just setup`        | install UI dependencies (once)                                                             |
-| `just dev`          | run the app with hot reload                                                                |
-| `just check`        | `cargo fmt --check`, clippy `-D warnings`, svelte-check; must be clean                     |
-| `just fmt`          | apply formatting                                                                           |
-| `just test`         | Rust tests, then UI tests                                                                  |
-| `just test-samples` | also the tests that need the real `.aif` samples in the repo root                          |
-| `just build-debug`  | quick debug exe, no installer                                                              |
-| `just e2e`          | build the debug exe, then run the end-to-end suite (Windows; one-time setup below)         |
-| `just e2e-diagnose` | start the debug exe through msedgedriver with a verbose log (for session failures)         |
-| `just release`      | optimised standalone app for this machine, no installer (`target/release/recording-fixer`) |
-| `just build`        | installers                                                                                 |
+| Recipe                       | Does                                                                                           |
+| ---------------------------- | ---------------------------------------------------------------------------------------------- |
+| `just setup`                 | install UI dependencies (once)                                                                 |
+| `just dev`                   | run the app with hot reload                                                                    |
+| `just check`                 | `cargo fmt --check`, clippy `-D warnings`, svelte-check; must be clean                         |
+| `just fmt`                   | apply formatting                                                                               |
+| `just test`                  | Rust tests, then UI tests                                                                      |
+| `just test-samples`          | also the tests that need the real `.aif` samples in the repo root                              |
+| `just build-debug`           | quick debug exe, no installer                                                                  |
+| `just e2e`                   | build the debug exe, then run the end-to-end suite (Windows; one-time setup below)             |
+| `just e2e-diagnose`          | start the debug exe through msedgedriver with a verbose log (for session failures)             |
+| `just release`               | optimised standalone app for this machine, no installer (`target/release/recording-fixer`)     |
+| `just build`                 | installers                                                                                     |
 | `just prepare-release X.Y.Z` | start a release: bump the versions on a `release/vX.Y.Z` branch and push it (see CONTRIBUTING) |
 | `just tag-release X.Y.Z`     | after that PR is merged: tag `main` and push the tag                                           |
-| `just ci`           | `check`, `test` and `e2e`: what CI runs                                                    |
+| `just ci`                    | `check`, `test` and `e2e`: what CI runs                                                        |
 
 The recipes set `LIBCLANG_PATH` for ASIO on Windows and leave ASIO out on macOS, so you don't have to. They are thin wrappers; the raw commands are listed below if you prefer them.
 
@@ -219,11 +235,15 @@ When exporting you can choose **Match a loudness** (for example −14 LUFS for s
 
 ## Releases
 
-Installers for Windows and macOS (with ffmpeg included) are on the [Releases page](https://github.com/djryanj/recording-fixer/releases). How a release is made, tested and signed is in [docs/RELEASING.md](docs/RELEASING.md); what ships inside is listed in [docs/THIRD-PARTY.md](docs/THIRD-PARTY.md).
+Installers for Windows and macOS (with ffmpeg included, plus a smaller `no-ffmpeg` download of each) are on the [Releases page](https://github.com/djryanj/recording-fixer/releases). How a release is made, tested and signed is in [docs/RELEASING.md](docs/RELEASING.md); what ships inside is listed in [docs/THIRD-PARTY.md](docs/THIRD-PARTY.md).
 
 ## Privacy and logs
 
 The app collects no data, ever; see [PRIVACY.md](PRIVACY.md). Its only network use is an optional once-a-day check of GitHub's public release list for a newer version (switch it off in Settings). When something goes wrong, **Settings > Troubleshooting** shows the local log file or copies it, so you can attach it to a bug report; it is never sent anywhere.
+
+## AI Disclosure
+
+This project has been developed with heavy use of Anthropic's Claude Code.
 
 ## License
 
@@ -235,4 +255,4 @@ Third-party pieces and how they fit (details in [docs/LICENSING.md](docs/LICENSI
 - **Fonts** (Barlow, Barlow Condensed, JetBrains Mono) are bundled under the SIL Open Font License 1.1.
 - **ffmpeg** is a separate program the app runs, not part of it. Whoever packages a build with ffmpeg inside must follow ffmpeg's license (use an LGPL build, include its license text and a link to its source).
 - **Apple's AAC encoder** is only ever loaded from the user's own iTunes install; this project never ships or downloads it. Never bundle `libfdk_aac` either.
-- Rust crates and npm packages are MIT, Apache-2.0, ISC, BSD, Zlib, Unicode, or MPL-2.0 (five small crates), all compatible with the GPL.
+- Rust crates and npm packages are MIT, Apache-2.0, ISC, BSD, Zlib, Unicode, or MPL-2.0, all compatible with the GPL.

@@ -322,6 +322,19 @@ describe('the real app', () => {
     await driver.wait(async () => (await driver.findElements(By.xpath("//div[@aria-label='Settings']"))).length === 0, 5000);
   });
 
+  // Only when testing the installer that comes without ffmpeg (the release workflow hides any ffmpeg on the PATH).
+  it('starts without ffmpeg and says so', { skip: !process.env.E2E_EXPECT_NO_FFMPEG }, async () => {
+    const button = await find("//button[contains(.,'Settings')]");
+    assert.match(await button.getText(), /needs ffmpeg/i, 'the Settings button flags the missing ffmpeg');
+    await button.click();
+    const dialog = await find("//div[@role='dialog'][@aria-label='Settings']");
+    assert.match(await dialog.getText(), /Not found/);
+    assert.ok(!(await (await dialog.findElement(By.xpath(".//label[.//b[normalize-space()='MP3']]/input"))).isEnabled()), 'MP3 export is switched off');
+    // The rest of the app still works: the recordings are listed.
+    await clickXp("//div[@role='dialog']" + XP.button('Done'));
+    assert.ok((await listed()) > 0, 'recordings are still listed');
+  });
+
   // Only when testing an installed release (the release workflow): the ffmpeg in use must be the one shipped with the app.
   it('uses the ffmpeg that came with the app', { skip: !process.env.E2E_EXPECT_BUNDLED_FFMPEG }, async () => {
     await clickXp("//button[contains(.,'Settings')]");

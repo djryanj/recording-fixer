@@ -4,7 +4,7 @@ This app is licensed under the [GNU GPL v3 or later](../LICENSE). It includes or
 
 ## ffmpeg (bundled, run as a separate program)
 
-The installers include a copy of **ffmpeg**, which the app starts as a subprocess to make MP3 and AAC files. It is not linked into the app.
+The normal installers include a copy of **ffmpeg** (the files with `no-ffmpeg` in their name leave it out), which the app starts as a subprocess to make MP3 and AAC files. It is not linked into the app.
 
 - **Licence: LGPL v2.1 or later.** The bundled builds are configured without `--enable-gpl` and `--enable-nonfree`. They contain no `libfdk_aac` and nothing from Apple's DLL. The licence text is at <https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html> and in the ffmpeg source.
 - **Windows (x86_64):** the "lgpl" variant of the static builds from [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds), downloaded over HTTPS and checked against the checksum list published with them (`scripts/fetch-ffmpeg.mjs`). The exact file and its SHA-256 are recorded in `FFMPEG-BUILD.txt`, which sits next to the program in the install folder and is attached to each release. Source for FFmpeg: <https://ffmpeg.org/download.html>; the build scripts that produced the binary are in BtbN's repository.

@@ -27,6 +27,12 @@ If a step fails after the tag was pushed, fix the problem on `main` and release 
 | Windows | BtbN's LGPL build, downloaded and checked against the checksum list published with it (`scripts/fetch-ffmpeg.mjs`). The release is called "latest", so this is an integrity check, not a pin: each release records the exact file and hash in `FFMPEG-BUILD.txt`. For a fully reproducible pin, host a chosen build as an asset of this repository and point the script at it. |
 | macOS | Built from source by `scripts/build-ffmpeg-macos.sh`: FFmpeg 7.1.1 and LAME 3.100, pinned by SHA-256, LGPL only, AudioToolbox for AAC. Takes about 10 minutes on the runner. **This script has not yet been run on a Mac**; the trial run is how to find out. |
 
+### The variant without ffmpeg
+
+Every release also carries a second installer per platform with `no-ffmpeg` in its name (`…_x64-no-ffmpeg-setup.exe`, `…_universal-no-ffmpeg.dmg`): the same app, built with `src-tauri/tauri.release-lite.conf.json`, which leaves out the ffmpeg sidecar and its build record. It is for people who bring their own ffmpeg, and for package-manager manifests that declare ffmpeg as a dependency. The app already copes with no ffmpeg (MP3 and AAC are switched off, with instructions in Settings).
+
+In the workflow it is built right after the normal one (the Rust code is recompiled, because the bundle configuration is part of it; dependencies are cached), signed the same way, and checked: the Windows job installs it, confirms the folder contains no `ffmpeg.exe`, hides any ffmpeg on the runner's PATH, and runs the end-to-end test "starts without ffmpeg and says so" against it; the macOS job checks the app contains no ffmpeg. The full end-to-end suite is run on the normal installer only. The release notes explain the two files.
+
 To change the ffmpeg version, edit the pinned values (the archive name in `fetch-ffmpeg.mjs`; the versions and hashes at the top of `build-ffmpeg-macos.sh`), run a trial, and update `docs/THIRD-PARTY.md`.
 
 ## Signing

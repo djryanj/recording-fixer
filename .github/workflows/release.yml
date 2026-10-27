@@ -164,17 +164,6 @@ jobs:
             cp target/universal-apple-darwin/release/bundle/dmg/*.dmg dist/
           fi
           cp src-tauri/binaries/FFMPEG-BUILD.txt "dist/FFMPEG-BUILD-$RUNNER_OS.txt"
-          # Only the installer for this OS exists, so skip the pattern that matches nothing: an unmatched
-          # glob stays literal, and a failed test as the last command of the loop would stop the step.
-          (
-            cd dist
-            for f in *.exe *.dmg; do
-              [ -f "$f" ] || continue
-              if command -v sha256sum >/dev/null; then sha256sum "$f"; else shasum -a 256 "$f"; fi
-            done > "SHA256SUMS-$RUNNER_OS.txt"
-          )
-          [ -s "dist/SHA256SUMS-$RUNNER_OS.txt" ] || { echo "no installer was found to checksum" >&2; exit 1; }
-          cat "dist/SHA256SUMS-$RUNNER_OS.txt"
 
       # ---- Windows: install the very installer that will be published, and run the end-to-end suite on it ----
       - name: Install the installer
@@ -182,7 +171,7 @@ jobs:
         id: install
         shell: pwsh
         run: |
-          $installer = (Get-ChildItem dist/*-setup.exe | Select-Object -First 1).FullName
+          $installer = (Get-ChildItem dist/*-setup.exe | Where-Object { $_.Name -notmatch 'no-ffmpeg' } | Select-Object -First 1).FullName
           # Silent per-user install into a known folder (no spaces: NSIS wants /D= last and unquoted).
           $dir = Join-Path $env:RUNNER_TEMP 'installed-app'
           Start-Process -FilePath $installer -ArgumentList "/S /D=$dir" -Wait
@@ -220,6 +209,111 @@ jobs:
           name: e2e-logs
           path: ui/e2e/.tools/logs/
           if-no-files-found: ignore
+
+      # ---- the same app without ffmpeg: a much smaller download, for people who bring their own ----
+      - name: Build the installer without ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: npm --prefix ui exec -- tauri build --config src-tauri/tauri.release-lite.conf.json --bundles nsis
+        env:
+          LIBCLANG_PATH: 'C:\Program Files\LLVM\bin'
+      - name: Name it and add it to the files (Windows)
+        if: runner.os == 'Windows'
+        id: lite
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$(ls target/release/bundle/nsis/*-setup.exe | head -n 1)"
+          dest="dist/$(basename "$src" -setup.exe)-no-ffmpeg-setup.exe"
+          cp "$src" "$dest"
+          echo "installer=$dest" >> "$GITHUB_OUTPUT"
+      - name: Upload the unsigned no-ffmpeg installer for signing
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORGANIZATION_ID != ''
+        id: unsigned_lite
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unsigned-windows-installer-no-ffmpeg
+          path: ${{ steps.lite.outputs.installer }}
+          retention-days: 7
+      - name: Sign the no-ffmpeg installer (SignPath)
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2.3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.unsigned_lite.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed-no-ffmpeg
+      - name: Use the signed no-ffmpeg installer
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORGANIZATION_ID != ''
+        shell: bash
+        env:
+          INSTALLER: ${{ steps.lite.outputs.installer }}
+        run: cp -f signed-no-ffmpeg/*.exe "$INSTALLER"
+      - name: Install the no-ffmpeg installer and check it reports ffmpeg as missing
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installer = (Get-ChildItem dist/*-no-ffmpeg-setup.exe | Select-Object -First 1).FullName
+          $dir = Join-Path $env:RUNNER_TEMP 'installed-no-ffmpeg'
+          Start-Process -FilePath $installer -ArgumentList "/S /D=$dir" -Wait
+          Get-ChildItem $dir | ForEach-Object { Write-Host "  $($_.Name)" }
+          $exe = Join-Path $dir 'recording-fixer.exe'
+          if (-not (Test-Path $exe)) { throw "the app is not in the install folder: $exe" }
+          if (Test-Path (Join-Path $dir 'ffmpeg.exe')) { throw 'the no-ffmpeg installer contains ffmpeg' }
+          # The runner may have an ffmpeg on its PATH; hide it, so the app can only find what the installer put there.
+          $env:PATH = (($env:PATH -split ';') | Where-Object { $_ -and -not (Test-Path (Join-Path $_ 'ffmpeg.exe')) }) -join ';'
+          $env:APP_EXE = $exe
+          $env:E2E_EXPECT_NO_FFMPEG = '1'
+          # Straight to node: options for the test runner must come before the file, which "npm run e2e --" cannot do.
+          node --test --test-timeout=180000 --test-name-pattern="without ffmpeg" ui/e2e/app.e2e.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Keep driver logs (no-ffmpeg check)
+        if: failure() && runner.os == 'Windows'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-logs-no-ffmpeg
+          path: ui/e2e/.tools/logs/
+          if-no-files-found: ignore
+      - name: Build the disk image without ffmpeg (macOS, signed and notarized)
+        if: runner.os == 'macOS' && steps.apple.outputs.signed == 'true'
+        run: npm --prefix ui exec -- tauri build --config src-tauri/tauri.release-lite.conf.json --bundles app,dmg --target universal-apple-darwin -- --no-default-features
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - name: Build the disk image without ffmpeg (macOS, unsigned)
+        if: runner.os == 'macOS' && steps.apple.outputs.signed != 'true'
+        run: npm --prefix ui exec -- tauri build --config src-tauri/tauri.release-lite.conf.json --bundles app,dmg --target universal-apple-darwin -- --no-default-features
+      - name: Name it and add it to the files (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle=target/universal-apple-darwin/release/bundle
+          if ls "$bundle"/macos/*.app/Contents/MacOS/ffmpeg >/dev/null 2>&1; then echo "the no-ffmpeg app contains ffmpeg" >&2; exit 1; fi
+          src="$(ls "$bundle"/dmg/*.dmg | head -n 1)"
+          cp "$src" "dist/$(basename "$src" .dmg)-no-ffmpeg.dmg"
+
+      - name: Checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Only the installers for this OS exist, so skip the pattern that matches nothing: an unmatched
+          # glob stays literal, and a failed test as the last command of the loop would stop the step.
+          (
+            cd dist
+            for f in *.exe *.dmg; do
+              [ -f "$f" ] || continue
+              if command -v sha256sum >/dev/null; then sha256sum "$f"; else shasum -a 256 "$f"; fi
+            done > "SHA256SUMS-$RUNNER_OS.txt"
+          )
+          [ "$(wc -l < "dist/SHA256SUMS-$RUNNER_OS.txt")" -ge 2 ] || { echo "expected an installer with and one without ffmpeg" >&2; exit 1; }
+          cat "dist/SHA256SUMS-$RUNNER_OS.txt"
 
       - name: Keep the files
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -265,7 +359,9 @@ jobs:
             echo
             echo "Windows: run the \`-setup.exe\`. macOS: open the \`.dmg\` and drag the app to Applications. If your system warns about an unknown publisher, see [Installing](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/docs/USER-GUIDE.md#installing). Checksums are in \`SHA256SUMS.txt\`."
             echo
-            echo "Each installer includes ffmpeg (LGPL build); the exact build and its source are in the \`FFMPEG-BUILD-*.txt\` files and in THIRD-PARTY.md."
+            echo "Files with `no-ffmpeg` in the name are the same app without ffmpeg: a much smaller download for people who already have ffmpeg or want to supply their own. MP3 and AAC need one; see [ffmpeg](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/docs/USER-GUIDE.md#ffmpeg-and-using-your-own). Everything else works without it."
+            echo
+            echo "Each of the other installers includes ffmpeg (LGPL build); the exact build and its source are in the \`FFMPEG-BUILD-*.txt\` files and in THIRD-PARTY.md."
           } > notes.md
           flags=(--draft --verify-tag --title "Recording Fixer for Serato DJ $VERSION" --notes-file notes.md)
           [ "$PRERELEASE" = "true" ] && flags+=(--prerelease)

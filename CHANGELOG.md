@@ -18,6 +18,7 @@ First version, not yet tagged or published.
 - Audio preview through WASAPI, ASIO (Windows build option) and CoreAudio, with device and output-pair selection.
 - Export to AIFF, MP3 (CBR, VBR, ABR) and AAC through ffmpeg, with ID3 tags, filename and tag templates, and fades applied identically for every output.
 - Apple AAC encoding on Windows through the user's own `CoreAudioToolbox.dll`, with encoder delay compensated. Encoder choice is detected at startup and can be overridden.
+- Each release also has a smaller `no-ffmpeg` installer of each kind, for people who bring their own ffmpeg; the app tells you how to add one.
 - Windows and macOS installers with ffmpeg included (an LGPL build), produced by a tag-triggered release workflow that tests the installed Windows app before drafting the release, with optional code signing (see docs/RELEASING.md). A user guide (docs/USER-GUIDE.md, linked from Settings > About) and a list of bundled components (docs/THIRD-PARTY.md).
 - A loudness graph under the waveform (as recorded, and after processing, with the target), filled in progressively while a recording is measured for the first time. Measuring a 3 hour recording takes about 12 seconds (it took minutes in development builds before the audio crates were optimised there).
 - Fades have their own tab in the editor, with quick presets, and a section in Settings.

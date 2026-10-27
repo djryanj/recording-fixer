@@ -4,7 +4,7 @@ Recording Fixer finds the recordings Serato DJ made, fixes the ones that Serato 
 
 It is not affiliated with or endorsed by Serato.
 
-Contents: [Installing](#installing) · [The first minute](#the-first-minute) · [Repairing](#repairing-a-recording) · [The editor](#the-editor) · [Exporting](#exporting) · [Loudness](#loudness) · [Fades](#fades) · [Playing and audio output](#playing-and-audio-output) · [Settings](#settings) · [Problems](#when-something-goes-wrong) · [Questions](#questions)
+Contents: [Installing](#installing) · [The first minute](#the-first-minute) · [Repairing](#repairing-a-recording) · [The editor](#the-editor) · [Exporting](#exporting) · [Loudness](#loudness) · [Fades](#fades) · [Playing and audio output](#playing-and-audio-output) · [ffmpeg](#ffmpeg-and-using-your-own) · [Settings](#settings) · [Problems](#when-something-goes-wrong) · [Questions](#questions) · [Contributing](#for-developers)
 
 ---
 
@@ -14,7 +14,9 @@ Contents: [Installing](#installing) · [The first minute](#the-first-minute) · 
 
 **macOS 11 or newer (Apple silicon and Intel).** Open the `.dmg` and drag the app into Applications.
 
-**ffmpeg is included.** MP3 and AAC export use ffmpeg, and a copy comes with the app, so there is nothing else to install.
+**ffmpeg is included.** MP3 and AAC export use ffmpeg, and a copy comes with the app, so there is nothing else to install. (You can also use your own: see [ffmpeg](#ffmpeg-and-using-your-own).)
+
+**A smaller download without ffmpeg.** Each release also has a file with `no-ffmpeg` in its name: the same app without the ffmpeg copy, a much smaller download. Choose it if you already have ffmpeg, or want to supply your own. Everything works except MP3 and AAC export, which stay switched off until the app finds an ffmpeg (see [ffmpeg](#ffmpeg-and-using-your-own)).
 
 ### "Windows protected your PC" / "can't be opened because Apple cannot check it"
 
@@ -48,14 +50,16 @@ Use **+ Add folder…** for anywhere else, and tick or untick the folders under 
 
 Each row shows a **status**:
 
-| Status | Meaning | What you can do |
-|---|---|---|
-| **OK** | The file is fine. | Play, edit, export. |
-| **Needs repair** | Serato never wrote the length into the file header. The audio is all there. | Repair it, or export it straight away (the editor can read it as it is). |
-| **In use** | Serato may still be recording it (it is open, or was just changed). | Nothing. The app will never touch a file Serato might be writing. |
-| **Unreadable / Unsupported** | Not an AIFF file the app understands. | Nothing. |
+| Status                       | Meaning                                                                     | What you can do                                                          |
+| ---------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| **OK**                       | The file is fine.                                                           | Play, edit, export.                                                      |
+| **Needs repair**             | Serato never wrote the length into the file header. The audio is all there. | Repair it, or export it straight away (the editor can read it as it is). |
+| **In use**                   | Serato may still be recording it (it is open, or was just changed).         | Nothing. The app will never touch a file Serato might be writing.        |
+| **Unreadable / Unsupported** | Not an AIFF file the app understands.                                       | Nothing.                                                                 |
 
 Click ▶ on a row to listen to the whole file. **Space** plays and pauses.
+
+![The recording list. Two files are ticked; one in Recording temp needs repair](images/list.png)
 
 ---
 
@@ -65,6 +69,8 @@ Select the file(s) marked **Needs repair** and press **Repair…**. You choose:
 
 - **Save a repaired copy** (recommended). A new file `name (fixed).aif` appears next to the original, which is left exactly as it was.
 - **Fix in place.** Quicker and needs no extra disk space. The original header is first saved as `name.aif.hdrbak`, so it can be undone.
+
+![Choosing how to repair: a copy next to the original, or in place](images/repair.png)
 
 The repair only writes three numbers into the file's header; it does not re-encode anything, so it is lossless and takes a moment even for a 3 GB set.
 
@@ -76,6 +82,8 @@ You do not have to repair a file before editing or exporting it.
 
 Select one or more recordings and press **Edit & export…**. The editor shows every selected recording as a **clip** on a waveform timeline, in the order they were recorded. Nothing is changed in your files: the editor only keeps a list of what to include, and nothing is written until you export.
 
+![The editor: the waveform timeline with the clip below it, and the export settings on the right](images/editor.png)
+
 ### Moving around
 
 - **Click** the waveform (or the ruler) to play from there. **Space** pauses and resumes.
@@ -84,13 +92,13 @@ Select one or more recordings and press **Edit & export…**. The editor shows e
 
 ### Cutting
 
-| To… | Do this |
-|---|---|
-| **Trim** the start or end of a clip | Drag its edge, or **Trim start here** / **Trim end here** at the playhead. |
-| **Split** a clip in two | Put the playhead where you want the cut and press **Split at playhead** (`S`). |
-| **Cut a section out** | Split at the start, split at the end, then select the middle piece and **Remove** it (`Delete`). |
-| **Reorder** clips | Drag the clip by its name bar at the top. |
-| Type an exact position | Edit the time fields, or enter `#12345` for sample number 12345. |
+| To…                                 | Do this                                                                                          |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------ |
+| **Trim** the start or end of a clip | Drag its edge, or **Trim start here** / **Trim end here** at the playhead.                       |
+| **Split** a clip in two             | Put the playhead where you want the cut and press **Split at playhead** (`S`).                   |
+| **Cut a section out**               | Split at the start, split at the end, then select the middle piece and **Remove** it (`Delete`). |
+| **Reorder** clips                   | Drag the clip by its name bar at the top.                                                        |
+| Type an exact position              | Edit the time fields, or enter `#12345` for sample number 12345.                                 |
 
 What you hear in the editor is what you have cut.
 
@@ -108,11 +116,13 @@ Press **Export**. The settings are in tabs on the right of the editor, and the a
 
 ### Format & quality
 
-| Format | Good for | Notes |
-|---|---|---|
-| **AIFF** | An exact, lossless copy; further editing. | Large. A single AIFF cannot be bigger than 4 GB (about 6 hours of CD-quality stereo); the app warns you. No tags. |
-| **MP3** | Sharing and phones; works everywhere. | **Constant** (CBR, 320 kbps is the safe choice), **Variable** (VBR, V0 is the best quality for its size) or **Average** (ABR). ID3 tags version 2.3 (most compatible) or 2.4, optionally also ID3v1. |
-| **AAC** (.m4a) | Same quality as MP3 in less space; Apple devices. | Constant or variable quality. On a Mac the encoder is Apple's own; on Windows see [Apple's AAC encoder](#apples-aac-encoder-windows-optional). |
+| Format         | Good for                                          | Notes                                                                                                                                                                                                |
+| -------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **AIFF**       | An exact, lossless copy; further editing.         | Large. A single AIFF cannot be bigger than 4 GB (about 6 hours of CD-quality stereo); the app warns you. No tags.                                                                                    |
+| **MP3**        | Sharing and phones; works everywhere.             | **Constant** (CBR, 320 kbps is the safe choice), **Variable** (VBR, V0 is the best quality for its size) or **Average** (ABR). ID3 tags version 2.3 (most compatible) or 2.4, optionally also ID3v1. |
+| **AAC** (.m4a) | Same quality as MP3 in less space; Apple devices. | Constant or variable quality. On a Mac the encoder is Apple's own; on Windows see [Apple's AAC encoder](#apples-aac-encoder-windows-optional).                                                       |
+
+![The Format & quality tab with MP3 chosen](images/format.png)
 
 The estimated size is shown under the options.
 
@@ -134,15 +144,17 @@ Progress is shown at the bottom of the window, with **Cancel**. A cancelled or f
 
 DJ sets recorded from Serato are often quiet, and uneven: a beatmix, where two tracks play at once, is louder than a single track, and now and then one track was simply played at a lower level than the rest. The **Loudness** tab fixes that on export, as part of the same step as the conversion. It is **off** unless you choose it, and when off the audio is exported exactly as recorded.
 
+![The Loudness tab: a target of -14 LUFS, and under the waveform the loudness graph with the target as a dashed line](images/loudness.png)
+
 ### The choices
 
 - **Leave as recorded**: no change.
 - **Match a loudness**: brings the whole set to a target loudness. **−14 LUFS** is the usual level for streaming services; **−16** is quieter, **−11** louder. (LUFS is the standard unit of perceived loudness; more negative is quieter.)
 - **Raise to a peak limit**: one steady change in volume so that the highest peak just reaches the limit (for example −0.1 dB). Nothing else is altered.
 
-For *Match a loudness* you also choose:
+For _Match a loudness_ you also choose:
 
-- **Evening out**: *None* applies one volume change to the whole set. *Gentle*, *Medium* (recommended) and *Strong* also turn down the stretches that are much louder than their surroundings and turn up the stretches that are much quieter, by a fraction of the difference. A breakdown that is quiet on purpose is left alone, and so is the slow build of a set, so the shape of your set survives.
+- **Evening out**: _None_ applies one volume change to the whole set. _Gentle_, _Medium_ (recommended) and _Strong_ also turn down the stretches that are much louder than their surroundings and turn up the stretches that are much quieter, by a fraction of the difference. A breakdown that is quiet on purpose is left alone, and so is the slow build of a set, so the shape of your set survives.
 - **Peak limit** (a "true peak" in dBTP): nothing will go above this. A limiter catches the occasional peak that would otherwise exceed it. **−1 dBTP** is a good value, especially for MP3 and AAC, which can overshoot a little when they are encoded.
 
 The result keeps the recording's own bit depth: 16-bit stays 16-bit (with a tiny amount of dither added, which is the standard way to do this cleanly).
@@ -151,11 +163,11 @@ The result keeps the recording's own bit depth: 16-bit stays 16-bit (with a tiny
 
 With the Loudness tab open, a **graph appears under the waveform**: the loudness over time as recorded (grey) and, once you choose a mode, what it will be afterwards (amber), with the target as a dashed line. You can see the beatmixes that stick out and the tracks that are too quiet.
 
-And you can **hear it**: with *Hear this when playing in the editor* ticked, playing (and seeking anywhere) in the editor is processed the same way as the export will be. Untick it to compare with the original. It is accurate to about half a LU; the export makes one more check pass to land exactly on the target.
+And you can **hear it**: with _Hear this when playing in the editor_ ticked, playing (and seeking anywhere) in the editor is processed the same way as the export will be. Untick it to compare with the original. It is accurate to about half a LU; the export makes one more check pass to land exactly on the target.
 
 The first time a recording is used, it has to be measured from start to end: about 12 seconds for a three-hour set. The graph fills in as that happens, a progress bar shows how far it has got, and the original keeps playing until it finishes. It is remembered afterwards, even when you restart.
 
-When an export finishes, the message under the file name says what happened, for example *"Loudness −14.0 LUFS (was −19.6), peak −1.0 dBTP; the limiter averaged 0.0 dB and reached 4.4 dB at most."*
+When an export finishes, the message under the file name says what happened, for example _"Loudness −14.0 LUFS (was −19.6), peak −1.0 dBTP; the limiter averaged 0.0 dB and reached 4.4 dB at most."_
 
 ### A word on how far to push it
 
@@ -164,6 +176,8 @@ A set that is already loud has little room. If the message shows the limiter ave
 ---
 
 ## Fades
+
+![The Fades tab with a 2 second fade in and a 5 second fade out; the timeline shows both over the waveform](images/fades.png)
 
 The **Fades** tab adds a fade in at the start and a fade out at the end of each exported file, in seconds, for every format. A set that stops abruptly (or starts mid-track) sounds finished with a few seconds of fade. The timeline shows the fades as dimmed ramps over the waveform. Fades are applied on export; they are not played in the editor.
 
@@ -184,18 +198,71 @@ On a Mac, AAC uses Apple's high-quality encoder automatically. On Windows it is 
 
 ---
 
+## ffmpeg, and using your own
+
+**ffmpeg** is a free, widely used audio converter. The app runs it in the background to make MP3 and AAC files (and, when Apple's encoder is used on Windows, to pack its output into an `.m4a`). You never open it yourself. Repairing, playing, editing and saving as AIFF do **not** use it.
+
+### Which one is used
+
+The app looks in this order and uses the first it finds:
+
+1. **The one you chose** in Settings → ffmpeg (see below).
+2. **The copy that came with the app**, which sits in the app's own folder. It is an LGPL build with MP3 (LAME) and AAC encoders, and on macOS Apple's AAC encoder as well.
+3. **One on your system path**, for example one installed with a package manager.
+
+Settings → ffmpeg shows what was found: its version, where it lives, whether it can make MP3, and the AAC encoders it has, best first (Apple's, then Fraunhofer's, then ffmpeg's own, then Windows'). The "best" one is used unless you pick another under **AAC** in the export settings.
+
+### If you installed the version without ffmpeg
+
+Settings → ffmpeg says **Not found**, the Settings button shows "needs ffmpeg", and MP3 and AAC are switched off. Nothing else is affected: repairing, playing, editing, loudness, fades and AIFF export all work. To switch MP3 and AAC on:
+
+- **Windows:** `winget install Gyan.FFmpeg` in a terminal, or download a build from the [ffmpeg download page](https://ffmpeg.org/download.html).
+- **macOS:** `brew install ffmpeg` (with [Homebrew](https://brew.sh/)), or download a build.
+
+Then reopen Settings: a program on your system path is found automatically. If you put it somewhere else, use **Choose a different ffmpeg…**.
+
+### Why use your own
+
+- You want an AAC encoder the included build cannot ship: **`libfdk_aac`** (Fraunhofer) is not allowed in a freely redistributable build, but if _your_ ffmpeg has it the app finds it and offers it.
+- You prefer a newer or differently built ffmpeg, or one you already keep up to date.
+- On Windows, you want to check a problem against a known ffmpeg.
+
+### How
+
+1. **Settings → ffmpeg → Choose a different ffmpeg…** and pick the program itself: `ffmpeg.exe` on Windows, `ffmpeg` on a Mac (not a folder, and not `ffprobe` or `ffplay`).
+2. The status updates at once. Check it says **Found**, shows your version, and that **MP3** and **AAC** are ticked as available.
+3. Your choice is remembered. **Use the automatic one** goes back to the included copy.
+
+Your ffmpeg needs, for MP3, an encoder called **`libmp3lame`**, and for AAC at least one AAC encoder (ffmpeg's built-in `aac` is in every normal build). Most full builds have both (a minimal one may not). The [ffmpeg download page](https://ffmpeg.org/download.html) lists where to get builds. To see what yours has, run this in a terminal:
+
+```
+ffmpeg -hide_banner -encoders
+```
+
+and look for `libmp3lame` and for lines that mention `aac` (for example `aac`, `aac_at`, `libfdk_aac`).
+
+If the file you chose is moved or deleted, the app quietly falls back to the included copy, then to the system path. If MP3 or AAC is greyed out in the export settings, the ffmpeg in use lacks that encoder: open Settings and use the automatic one.
+
+The included ffmpeg is separate software under its own licence (LGPL); its exact build is listed in the app's folder in `FFMPEG-BUILD.txt` and in [THIRD-PARTY.md](THIRD-PARTY.md). If you supply your own, its licence terms are yours to follow.
+
+---
+
 ## Settings
+
+![The Settings window](images/settings.png)
 
 The **⚙ Settings** button holds:
 
 - **Default export**: the format, quality, fades and loudness that a new export starts with.
-- **ffmpeg**: shows which ffmpeg is used and where it was found. The one included with the app is used unless you point the app at another with **Choose a different ffmpeg…** (for example one with extra codecs).
+- **ffmpeg**: shows which ffmpeg is used and where it was found. The one included with the app is used unless you point the app at another with **Choose a different ffmpeg…**: see [ffmpeg](#ffmpeg-and-using-your-own).
 - **Playback**: opens the audio output window.
 - **Updates and privacy**: whether the app looks for a newer version at start-up, and a **Check now** button.
 - **Troubleshooting**: **Show log file** and **Copy log to clipboard**.
 - **About**: the version, licence and a link to report a problem.
 
 The colour theme (Auto, Dark or Light) is the button next to Settings.
+
+![The same recording list in the light theme](images/list-light.png)
 
 ---
 
@@ -213,16 +280,16 @@ The one thing it can do online is ask GitHub whether a newer version exists: a p
 
 **Report a problem** with the button in Settings → About (or the link at the bottom of the window): [github.com/djryanj/recording-fixer/issues](https://github.com/djryanj/recording-fixer/issues). Say what you did, what you expected, and what happened, and attach the log.
 
-| Problem | Try |
-|---|---|
-| A file says **In use** | Close Serato (or wait: it was changed in the last few minutes). The app will not touch it until Serato is done. |
-| A recording is missing from the list | Is its folder ticked under **Show recordings from**? Add the folder with **+ Add folder…**, then **Rescan**. |
-| MP3 or AAC is greyed out | Open Settings → ffmpeg. The included ffmpeg should be found automatically; if you pointed the app at another one, **Use the automatic one**. |
-| The output device will not open | Close Serato or other audio programs that hold the device (especially ASIO), then choose it again in **Output**. |
-| No sound | Check **Output** shows the device you expect and that the volume slider is up. |
-| Export says it is over 4 GB | AIFF cannot hold that much. Choose MP3 or AAC, or export one file per clip. |
-| The first waveform of a very long file takes a while | It is built once, from the start, and you can see it grow. Afterwards it is cached. |
-| The window is blank | Please report it with the log. Restarting the app often clears it. |
+| Problem                                              | Try                                                                                                                                          |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| A file says **In use**                               | Close Serato (or wait: it was changed in the last few minutes). The app will not touch it until Serato is done.                              |
+| A recording is missing from the list                 | Is its folder ticked under **Show recordings from**? Add the folder with **+ Add folder…**, then **Rescan**.                                 |
+| MP3 or AAC is greyed out                             | Open Settings → ffmpeg. The included ffmpeg should be found automatically; if you pointed the app at another one, **Use the automatic one**. |
+| The output device will not open                      | Close Serato or other audio programs that hold the device (especially ASIO), then choose it again in **Output**.                             |
+| No sound                                             | Check **Output** shows the device you expect and that the volume slider is up.                                                               |
+| Export says it is over 4 GB                          | AIFF cannot hold that much. Choose MP3 or AAC, or export one file per clip.                                                                  |
+| The first waveform of a very long file takes a while | It is built once, from the start, and you can see it grow. Afterwards it is cached.                                                          |
+| The window is blank                                  | Please report it with the log. Restarting the app often clears it.                                                                           |
 
 ---
 
@@ -234,6 +301,12 @@ The one thing it can do online is ask GitHub whether a newer version exists: a p
 
 **Why does a repaired file open everywhere now?** Serato writes placeholders for the file's length at the start of a recording and fills them in when you stop. If Serato exits first, the audio is complete but the placeholders stay at zero and players see an empty file. The repair fills in the three numbers; see [ANALYSIS.md](ANALYSIS.md) for the details.
 
-**Can it use VST plug-ins?** Not yet. The loudness tab covers the usual "make the set loud and even" job without one.
+**Can it use VST/AU plug-ins?** No, and this is not planned. The loudness tab covers the usual "make the set loud and even" job without one.
 
 **Which licence is it under?** GNU GPL v3 or later. See [LICENSE](../LICENSE) and [THIRD-PARTY.md](THIRD-PARTY.md) for the components included, such as ffmpeg.
+
+---
+
+## For developers
+
+Want to fix something, add a feature, or just build it yourself? Everything you need is in the repository: [CONTRIBUTING.md](../CONTRIBUTING.md) explains how to propose changes (issues, branches, pull requests, what the checks are and how to run them), and the developer setup (installing the tools, `just` commands, tests) is in the [README](../README.md#developer-setup). The design notes are in [ANALYSIS.md](ANALYSIS.md) and the loudness feature in [MAXIMIZER.md](MAXIMIZER.md). Please read [PRIVACY.md](../PRIVACY.md) before adding anything that touches the network: the app collects nothing and that is a promise.

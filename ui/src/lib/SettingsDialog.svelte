@@ -123,7 +123,7 @@
           {:else}
             <i class="led bad"></i> <b>Not found.</b> MP3 and AAC export are unavailable until it is.
             <div class="muted">
-              Install it (on Windows: <code>winget install Gyan.FFmpeg</code>, or download from ffmpeg.org), then reopen this window, or point the app at it yourself.
+              Install it (on Windows: <code>winget install Gyan.FFmpeg</code>; on a Mac: <code>brew install ffmpeg</code>; or download from ffmpeg.org), then reopen this window, or point the app at it yourself.
             </div>
           {/if}
         </dd>
