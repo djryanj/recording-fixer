@@ -16,6 +16,8 @@ use crate::device::{
     AudioCallback, Backend, DeviceInfo, DeviceSelection, OpenedInfo, OpenedStream,
 };
 use crate::resample::StreamResampler;
+use dynamics::leveler::GainCurve;
+use dynamics::limiter::{Limiter, LimiterConfig};
 use edit_core::{Clip, Plan, PlanReader};
 use ringbuf::traits::{Consumer, Observer, Producer, Split};
 use ringbuf::{HeapCons, HeapProd, HeapRb};
@@ -175,10 +177,90 @@ fn make_callback(mut cons: HeapCons<f32>, sh: Arc<AudioShared>) -> AudioCallback
 
 // ---- decoder --------------------------------------------------------------------------
 
+/// Loudness processing to apply while playing: the same gain curve and limiter the export uses, so
+/// what is heard is what will be exported (apart from the small correction the export makes after a
+/// rehearsal).
+#[derive(Clone)]
+pub struct Processing {
+    pub curve: Arc<GainCurve>,
+    pub ceiling_db: f64,
+}
+
+/// Gain curve then limiter, run on the decoded audio. A seek restarts it a little before the new
+/// position, so the limiter has settled by the time the first audible frame arrives.
+struct Chain {
+    curve: Arc<GainCurve>,
+    ceiling_db: f64,
+    rate: f64,
+    channels: usize,
+    limiter: Limiter,
+    /// Source frame number of the next frame to be fed in.
+    frame: u64,
+    /// Output frames still to drop (the pre-roll).
+    discard: usize,
+    gains: Vec<f32>,
+    out: Vec<f32>,
+}
+
+impl Chain {
+    fn new(p: &Processing, rate: f64, channels: usize) -> Chain {
+        Chain {
+            curve: p.curve.clone(),
+            ceiling_db: p.ceiling_db,
+            rate,
+            channels,
+            limiter: Limiter::new(rate, channels, LimiterConfig::new(p.ceiling_db)),
+            frame: 0,
+            discard: 0,
+            gains: Vec::new(),
+            out: Vec::new(),
+        }
+    }
+
+    fn warmup(&self) -> u64 {
+        self.limiter.warmup_frames() as u64
+    }
+
+    /// Begin at source frame `start`; the first `discard` frames that come out are pre-roll.
+    fn restart(&mut self, start: u64, discard: usize) {
+        self.limiter = Limiter::new(
+            self.rate,
+            self.channels,
+            LimiterConfig::new(self.ceiling_db),
+        );
+        self.frame = start;
+        self.discard = discard;
+    }
+
+    /// Process a block of interleaved frames in place. `last` flushes the limiter's lookahead.
+    fn process(&mut self, samples: &mut Vec<f32>, last: bool) {
+        let ch = self.channels;
+        let frames = samples.len() / ch;
+        self.gains.resize(frames, 1.0);
+        self.curve.fill(self.frame, &mut self.gains);
+        self.frame += frames as u64;
+        for (frame, g) in samples.chunks_exact_mut(ch).zip(&self.gains) {
+            for s in frame {
+                *s *= *g;
+            }
+        }
+        self.out.clear();
+        self.limiter.process(samples, &mut self.out);
+        if last {
+            self.limiter.finish(&mut self.out);
+        }
+        let drop = (self.discard * ch).min(self.out.len());
+        self.discard -= drop / ch;
+        self.out.drain(..drop);
+        std::mem::swap(samples, &mut self.out);
+    }
+}
+
 struct DecoderCfg {
     dev_rate: u32,
     dev_ch: usize,
     pair: usize,
+    processing: Option<Processing>,
 }
 
 enum DecCmd {
@@ -210,11 +292,20 @@ struct Source {
     bytes: Vec<u8>,
     decoded: Vec<f32>,
     resampled: Vec<f32>,
+    chain: Option<Chain>,
 }
 
 impl Source {
     fn new(plan: Arc<Plan>, cfg: DecoderCfg) -> Self {
+        let chain = cfg.processing.as_ref().map(|p| {
+            Chain::new(
+                p,
+                plan.format.sample_rate,
+                usize::from(plan.format.channels),
+            )
+        });
         Source {
+            chain,
             reader: plan.reader_from(0),
             plan,
             cfg,
@@ -232,7 +323,16 @@ impl Source {
         let src_rate = self.plan.format.sample_rate.round() as u32;
         let frame =
             ((secs.max(0.0) * f64::from(src_rate)).round() as u64).min(self.plan.total_frames);
-        self.reader = self.plan.reader_from(frame);
+        // With processing, start a little early so the limiter has settled when audio is wanted.
+        let start = match &mut self.chain {
+            Some(chain) => {
+                let start = frame.saturating_sub(chain.warmup());
+                chain.restart(start, (frame - start) as usize);
+                start
+            }
+            None => frame,
+        };
+        self.reader = self.plan.reader_from(start);
         self.pending.clear();
         self.off = 0;
         self.done = frame >= self.plan.total_frames;
@@ -269,6 +369,9 @@ impl Source {
         let whole = got - got % align;
         self.decoded.clear();
         decode_be(&self.bytes[..whole], f.bits, &mut self.decoded);
+        if let Some(chain) = &mut self.chain {
+            chain.process(&mut self.decoded, eof);
+        }
         self.pending.clear();
         self.off = 0;
         let src_ch = usize::from(f.channels);
@@ -395,6 +498,7 @@ enum Cmd {
     Load {
         clips: Vec<Clip>,
         start_secs: f64,
+        processing: Option<Processing>,
         reply: mpsc::Sender<Result<LoadInfo>>,
     },
     Play,
@@ -436,6 +540,8 @@ struct EngineThread {
     active: Option<Active>,
     plan: Option<Arc<Plan>>,
     decoder: Option<Decoder>,
+    /// Loudness processing for the loaded material, if any.
+    processing: Option<Processing>,
     volume: f32,
 }
 
@@ -455,8 +561,10 @@ impl EngineThread {
                 Cmd::Load {
                     clips,
                     start_secs,
+                    processing,
                     reply,
                 } => {
+                    self.processing = processing;
                     let _ = reply.send(self.load(&clips, start_secs));
                 }
                 Cmd::Play => self.play(),
@@ -564,6 +672,7 @@ impl EngineThread {
             dev_rate: active.info.rate,
             dev_ch: usize::from(active.info.channels.max(1)),
             pair: active.info.out_pair,
+            processing: self.processing.clone(),
         };
         self.decoder = Some(spawn_decoder(
             plan,
@@ -659,6 +768,7 @@ impl Playback {
                     active: None,
                     plan: None,
                     decoder: None,
+                    processing: None,
                     volume: 1.0,
                 }
                 .run()
@@ -693,9 +803,20 @@ impl Playback {
 
     /// Replace the material. Playback continues from `start_secs` of the new edit list.
     pub fn load(&self, clips: Vec<Clip>, start_secs: f64) -> Result<LoadInfo> {
+        self.load_with(clips, start_secs, None)
+    }
+
+    /// Like [`load`](Self::load), with loudness processing applied to what is played.
+    pub fn load_with(
+        &self,
+        clips: Vec<Clip>,
+        start_secs: f64,
+        processing: Option<Processing>,
+    ) -> Result<LoadInfo> {
         self.ask(|reply| Cmd::Load {
             clips,
             start_secs,
+            processing,
             reply,
         })?
     }

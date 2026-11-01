@@ -1,7 +1,8 @@
 version: 2
 updates:
   - package-ecosystem: github-actions
-    directory: /
+    # The second entry covers the local composite actions, which pin actions of their own.
+    directories: ["/", "/.github/actions/*"]
     schedule:
       interval: weekly
     groups:

@@ -12,7 +12,7 @@ Priority: **P0** = MVP, **P1** = v1.0, **P2** = later, **S** = stretch.
 
 **Not done yet (from the P0 list):** bundling an LGPL ffmpeg sidecar; Windows/macOS CI; scan progress streaming (the scan is one call, fast because it reads headers only); external-drive `_Serato_` discovery. The macOS path is untested on a Mac.
 
-**Not done (P1+):** fades in the playback preview, crossfades between clips, loop regions, device-latency compensation of the playhead, resampling for mixed rates, Apple AAC on macOS outside ffmpeg's `aac_at`, per-recording cover art, loudness normalisation, spectrogram, VST3.
+**Not done (P1+):** fades in the playback preview, crossfades between clips, loop regions, device-latency compensation of the playhead, resampling for mixed rates, Apple AAC on macOS outside ffmpeg's `aac_at`, per-recording cover art, loudness normalisation, spectrogram.
 
 Legend: items below are the full plan, not what is built.
 
@@ -66,7 +66,7 @@ Legend: items below are the full plan, not what is built.
 - **P0** Export to AIFF (lossless) for repaired/combined output.
 - **P0** Locate ffmpeg: bundled LGPL build by default; user-supplied binary selectable (e.g. with libfdk_aac).
 - **P0** Detect available AAC encoders (`ffmpeg -encoders`) and use the best; display which one is active.
-- **P1** Detect and use Apple AAC: macOS `aac_at`/`afconvert`; Windows via `CoreAudioToolbox.dll` if Apple Application Support is installed (never redistributed). Behaviour modelled on OBS.
+- **P1** Detect and use Apple AAC: macOS `aac_at`/`afconvert`; Windows via `CoreAudioToolbox.dll` if Apple Application Support is installed (never redistributed).
 - **P0** Progress, cancel, and error reporting.
 - **P1** Metadata: title/artist/date tags, auto-title from recording timestamp.
 - **P1** Output naming templates and destination folder choice.
@@ -85,12 +85,6 @@ Legend: items below are the full plan, not what is built.
 - **P1** Light/dark theme following the OS.
 - **P1** Drag-and-drop files and folders into the app.
 - **P2** Code-signed/notarised builds, auto-update.
-
-## Stretch: VST3
-- **S** Plugin scan and a per-project plugin chain (isolated host process).
-- **S** Apply the chain on export (offline render).
-- **S** Realtime preview through the chain.
-- **S** Plugin state saved with the project.
 
 ## Explicit non-goals (for now)
 - Multitrack mixing, MIDI, or general DAW functions.

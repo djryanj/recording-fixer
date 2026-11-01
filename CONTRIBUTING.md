@@ -56,6 +56,23 @@ If a test fails, ask whether the app or the test is wrong. Both happen.
 - One topic per PR. Include how you tested it and, for UI changes, a screenshot.
 - Say which platform you tested on. Do not claim macOS behaviour works unless CI or a Mac confirmed it.
 
+## Cutting a release
+
+Maintainers only. The version lives in `[workspace.package]` in the root `Cargo.toml` (`ui/package.json` is kept equal), and releases are tags named `vX.Y.Z` (or `vX.Y.Z-rc.N` for a candidate).
+
+1. From a clean, up-to-date `main`: `just prepare-release 0.1.0-rc.1`. This creates `release/v0.1.0-rc.1`, bumps `Cargo.toml`, `Cargo.lock`, `ui/package.json` and `ui/package-lock.json`, commits and pushes. For a **final** release it also dates the changelog's open section and leaves a fresh `Unreleased` above it (a pre-release leaves the changelog open, so the final version collects everything the candidates did).
+2. Open a PR from that branch into `main`, let CI pass, merge it.
+3. `git checkout main && git pull`, then `just tag-release 0.1.0-rc.1`. It refuses unless `main` is clean and matches `origin/main`, the versions match, and (for a final release) the changelog has the dated heading; then it tags and pushes the tag.
+
+The tag starts the **Release** workflow, which builds and tests the installers and drafts the GitHub release; see [docs/RELEASING.md](docs/RELEASING.md) for what it does, the trial run, and how to set up signing.
+
+A pre-release is not offered by the app's update check (which only looks at the latest *full* release), so announce candidates yourself.
+
+## Logging and privacy
+
+- The app writes a local log (`src-tauri/src/logging.rs`) through the `log` crate: use `log::info!`/`warn!`/`error!` in `src-tauri`, and log **file names, not full paths**. Failures returned to the UI from a command should go through `logged(...)`.
+- The app collects no data and that is a promise ([PRIVACY.md](PRIVACY.md)). Do not add telemetry, analytics or crash upload. Any new network access needs an opt-out, must send no identifiers, and must be described in `PRIVACY.md` in the same pull request. End-to-end tests set `RECORDING_FIXER_NO_UPDATE_CHECK` so they never touch the network.
+
 ## Security
 
 Please do not file security problems as public issues. Use GitHub's private vulnerability reporting on the repository's Security tab.

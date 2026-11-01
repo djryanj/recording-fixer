@@ -27,9 +27,14 @@ tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 aiff-core.workspace = true
+dynamics.workspace = true
 edit-core.workspace = true
 export.workspace = true
 library = { path = "../crates/library" }
 peaks = { path = "../crates/peaks" }
 playback = { path = "../crates/playback" }
 tauri-plugin-opener = "2.7.2"
+log = { version = "0.4", features = ["std"] }
+
+[dev-dependencies]
+tempfile.workspace = true

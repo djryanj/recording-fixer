@@ -13,7 +13,7 @@ pub mod testing;
 
 pub use cpal_backend::CpalBackend;
 pub use device::{Backend, DeviceInfo, DeviceSelection, OpenedInfo};
-pub use engine::{Error, LoadInfo, Playback, PlaybackState};
+pub use engine::{Error, LoadInfo, Playback, PlaybackState, Processing};
 
 /// Start the engine on the system's audio devices.
 pub fn start_system() -> Playback {

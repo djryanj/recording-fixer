@@ -13,16 +13,26 @@
     /** Fade lengths to preview on the timeline, in seconds. */
     fadeInSecs?: number;
     fadeOutSecs?: number;
+    /**
+     * Show the loudness graph under the waveform: the recordings' short-term loudness, and (with
+     * `gainDb`, the planned gain at the start of each second) what it will be after processing.
+     * `version` changes when the measurements become available. `null` hides the graph.
+     */
+    loudness?: { gainDb: number[] | null; target: number | null; version: number } | null;
     pxPerSec: number;
     onselect: (id: number | null) => void;
     onseek: (secs: number) => void;
     onchange: (clips: TClip[]) => void;
   }
-  let { clips, selectedId, playheadSecs, playing, fadeInSecs = 0, fadeOutSecs = 0, pxPerSec = $bindable(), onselect, onseek, onchange }: Props = $props();
+  let { clips, selectedId, playheadSecs, playing, fadeInSecs = 0, fadeOutSecs = 0, loudness = null, pxPerSec = $bindable(), onselect, onseek, onchange }: Props = $props();
 
   const RULER_H = 26;
   const LANE_H = 150;
-  const HEIGHT = RULER_H + LANE_H + 6;
+  /** The loudness graph's lane, and the range of loudness it shows (LUFS). */
+  const LOUD_H = 84;
+  const LOUD_TOP_LUFS = -5;
+  const LOUD_BOTTOM_LUFS = -40;
+  const height = $derived(RULER_H + LANE_H + 6 + (loudness ? LOUD_H + 6 : 0));
   const EDGE = 7;
   /** Magnification limit: this many pixels per sample frame, so single samples are easy to pick out. */
   const MAX_PX_PER_FRAME = 40;
@@ -52,6 +62,10 @@
   let viewX = $state(0);
   let rev = $state(0); // bumped whenever peak data arrives, to trigger a redraw
   let loading = $state(new Set<string>());
+  /** Waveforms still being built: how far each has got, so they can be drawn as they grow. */
+  let building = $state(new Map<string, { done: number; total: number }>());
+  /** The same for loudness measurements (only drawn while the graph is shown). */
+  let measuringLoud = $state(new Map<string, { done: number; total: number }>());
   let failed = $state(new Map<string, string>());
   let dragInfo = $state<{ insertAt: number } | null>(null);
   /** The rubber band while dragging across the waveform to zoom, in view pixels. */
@@ -67,6 +81,8 @@
 
   const entries = new Map<number, PeakEntry>();
   const sampleEntries = new Map<number, SampleEntry>();
+  /** Short-term loudness (LUFS) columns per clip, fetched for the part in view. */
+  const loudEntries = new Map<number, { path: string; s: number; e: number; cols: Float32Array; stamp: string }>();
   const ready = new Set<string>();
   const inflight = new Set<string>();
   let fetchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -135,6 +151,9 @@
     try {
       await api.ensurePeaks(path);
       ready.add(path);
+      const left = new Map(building);
+      left.delete(path);
+      building = left;
     } catch (e) {
       failed = new Map(failed).set(path, String(e));
     } finally {
@@ -147,13 +166,18 @@
 
   function schedule() {
     clearTimeout(fetchTimer);
-    fetchTimer = setTimeout(fetchVisible, 50);
+    fetchTimer = setTimeout(() => {
+      void fetchVisible();
+      void fetchLoudness();
+    }, 50);
   }
 
   async function fetchVisible() {
     for (const p of placed) {
       const c = p.clip;
-      if (!ready.has(c.path)) continue;
+      // A waveform still being built is drawn from what exists so far.
+      const progress = ready.has(c.path) ? undefined : building.get(c.path);
+      if (!ready.has(c.path) && !(progress && progress.done > 0)) continue;
       const x0 = p.x * pxPerSec - viewX;
       const w = p.w * pxPerSec;
       const visL = Math.max(0, -x0);
@@ -163,12 +187,12 @@
       const a = c.start + (Math.max(0, visL - margin) / pxPerSec) * c.rate;
       const b = c.start + (Math.min(w, visR + margin) / pxPerSec) * c.rate;
       const s = Math.max(0, Math.floor(a));
-      const e = Math.min(c.total, Math.ceil(b));
+      const e = Math.min(progress ? Math.min(c.total, progress.done) : c.total, Math.ceil(b));
       if (e <= s) continue;
       const wantedPerFrame = pxPerSec / c.rate;
 
       // Close enough to see individual samples: fetch them exactly instead of peaks.
-      if (c.rate / pxPerSec <= FINE_FRAMES_PER_PX && e - s <= MAX_SAMPLE_FRAMES) {
+      if (!progress && c.rate / pxPerSec <= FINE_FRAMES_PER_PX && e - s <= MAX_SAMPLE_FRAMES) {
         const got = sampleEntries.get(c.id);
         if (got && got.path === c.path && got.s <= s && got.e >= e) continue;
         const skey = `s|${c.id}|${s}|${e}`;
@@ -202,6 +226,147 @@
         inflight.delete(key);
       }
     }
+  }
+
+  async function fetchLoudness() {
+    if (!loudness) return;
+    const version = loudness.version;
+    for (const p of placed) {
+      const c = p.clip;
+      const prog = measuringLoud.get(c.path);
+      const x0 = p.x * pxPerSec - viewX;
+      const w = p.w * pxPerSec;
+      const visL = Math.max(0, -x0);
+      const visR = Math.min(w, viewW - x0);
+      if (visR <= visL) continue;
+      const margin = (visR - visL) * 0.25;
+      const s = Math.max(0, Math.floor(c.start + (Math.max(0, visL - margin) / pxPerSec) * c.rate));
+      let e = Math.min(c.total, Math.ceil(c.start + (Math.min(w, visR + margin) / pxPerSec) * c.rate));
+      // A measurement still running covers only the start of the recording.
+      if (prog && prog.done < prog.total) e = Math.min(e, prog.done);
+      if (e <= s) continue;
+      const stepFrames = c.rate / 10;
+      const cols = Math.min(4096, Math.max(2, Math.ceil((e - s) / stepFrames)), Math.max(16, Math.ceil(((e - s) / c.rate) * pxPerSec)));
+      const stamp = `${version}|${prog ? prog.done : ''}`;
+      const have = loudEntries.get(c.id);
+      if (have && have.path === c.path && have.stamp === stamp && have.s <= s && have.e >= e && have.cols.length / (have.e - have.s) >= (cols / (e - s)) * 0.75) continue;
+      const key = `l|${c.id}|${s}|${e}|${cols}|${stamp}`;
+      if (inflight.has(key)) continue;
+      inflight.add(key);
+      try {
+        const data = await api.getLoudness(c.path, s, e, cols);
+        if (data.length) {
+          loudEntries.set(c.id, { path: c.path, s, e: Math.min(e, s + Math.round(data.length * ((e - s) / cols))), cols: data, stamp });
+          rev++;
+        }
+      } catch {
+        /* the graph is a nicety: no data, no line */
+      } finally {
+        inflight.delete(key);
+      }
+    }
+  }
+
+  /** The planned gain (dB) at `t` seconds into the edit list, interpolated between the per-second values. */
+  function gainAt(t: number): number {
+    const g = loudness?.gainDb;
+    if (!g || g.length === 0) return 0;
+    const i = Math.max(0, Math.min(g.length - 1, Math.floor(t)));
+    const a = g[i];
+    const b = g[Math.min(g.length - 1, i + 1)];
+    return a + (b - a) * (t - Math.floor(t));
+  }
+
+  function drawLoudness(ctx: CanvasRenderingContext2D, col: ReturnType<typeof colours>, W: number) {
+    const top = RULER_H + LANE_H + 6;
+    const pad = 6;
+    const yOf = (lufs: number) => top + pad + ((LOUD_TOP_LUFS - Math.max(LOUD_BOTTOM_LUFS, Math.min(LOUD_TOP_LUFS, lufs))) / (LOUD_TOP_LUFS - LOUD_BOTTOM_LUFS)) * (LOUD_H - 2 * pad);
+    ctx.fillStyle = col.inset;
+    ctx.fillRect(0, top, W, LOUD_H);
+    ctx.font = '500 10px "JetBrains Mono", ui-monospace, monospace';
+    ctx.textBaseline = 'middle';
+    for (const v of [-10, -20, -30]) {
+      ctx.fillStyle = col.line;
+      ctx.fillRect(0, Math.round(yOf(v)), W, 1);
+      ctx.fillStyle = col.dim;
+      ctx.fillText(String(v), 4, yOf(v) - 6);
+    }
+    const processed = !!loudness?.gainDb;
+    placed.forEach((p) => {
+      const c = p.clip;
+      const x0 = p.x * pxPerSec - viewX;
+      const w = p.w * pxPerSec;
+      if (x0 > W || x0 + w < 0) return;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(Math.max(0, x0), top, Math.min(W, x0 + w) - Math.max(0, x0), LOUD_H);
+      ctx.clip();
+      const entry = loudEntries.get(c.id);
+      if (entry && entry.path === c.path) {
+        const n = entry.cols.length;
+        const per = (entry.e - entry.s) / n;
+        const trace = (shift: boolean) => {
+          ctx.beginPath();
+          let started = false;
+          for (let k = 0; k < n; k++) {
+            const frame = entry.s + (k + 0.5) * per;
+            if (frame < c.start || frame > c.end) continue;
+            const t = p.x + (frame - c.start) / c.rate;
+            const v = entry.cols[k];
+            const x = x0 + ((frame - c.start) / c.rate) * pxPerSec;
+            const y = yOf(v <= -99 ? LOUD_BOTTOM_LUFS : v + (shift ? gainAt(t) : 0));
+            if (started) ctx.lineTo(x, y);
+            else ctx.moveTo(x, y);
+            started = true;
+          }
+          ctx.stroke();
+        };
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = col.muted;
+        ctx.lineWidth = 1.2;
+        trace(false);
+        if (processed) {
+          ctx.strokeStyle = col.amber;
+          ctx.lineWidth = 1.8;
+          trace(true);
+        }
+      }
+      // Not measured yet: dim the rest, mark the frontier.
+      const prog = measuringLoud.get(c.path);
+      if (prog && prog.done < prog.total) {
+        const edge = x0 + ((prog.done - c.start) / c.rate) * pxPerSec;
+        const from = Math.min(x0 + w, Math.max(x0, edge));
+        ctx.fillStyle = col.inset;
+        ctx.globalAlpha = 0.55;
+        ctx.fillRect(from, top, x0 + w - from, LOUD_H);
+        ctx.globalAlpha = 1;
+        if (edge >= x0 && edge <= x0 + w) {
+          ctx.fillStyle = col.amber;
+          ctx.fillRect(edge - 1, top, 2, LOUD_H);
+        }
+        ctx.fillStyle = col.muted;
+        ctx.fillText(`measuring loudness ${Math.floor((prog.done / Math.max(1, prog.total)) * 100)}%`, Math.max(28, x0 + 8), top + LOUD_H - 10);
+      }
+      ctx.restore();
+    });
+    // The loudness the processing aims for.
+    if (loudness?.target != null) {
+      ctx.strokeStyle = col.amber;
+      ctx.globalAlpha = 0.5;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(0, Math.round(yOf(loudness.target)) + 0.5);
+      ctx.lineTo(W, Math.round(yOf(loudness.target)) + 0.5);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = col.amber;
+      ctx.fillText(`target ${loudness.target} LUFS`, W - 110, yOf(loudness.target) - 7);
+    }
+    ctx.fillStyle = col.muted;
+    ctx.fillText(processed ? 'LOUDNESS, 3 s AVERAGE: grey as recorded, amber after' : 'LOUDNESS, 3 s AVERAGE (LUFS)', 28, top + 8);
+    ctx.fillStyle = col.line;
+    ctx.fillRect(0, top, W, 1);
   }
 
   // ---- drawing -----------------------------------------------------------
@@ -303,12 +468,12 @@
     const dpr = window.devicePixelRatio || 1;
     const W = viewW;
     canvas.width = Math.round(W * dpr);
-    canvas.height = Math.round(HEIGHT * dpr);
+    canvas.height = Math.round(height * dpr);
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.scale(dpr, dpr);
     const col = colours();
-    ctx.clearRect(0, 0, W, HEIGHT);
+    ctx.clearRect(0, 0, W, height);
     ctx.font = '500 11px "JetBrains Mono", ui-monospace, monospace';
     ctx.textBaseline = 'middle';
 
@@ -385,8 +550,29 @@
           ctx.globalAlpha = 1;
         }
       }
+      // A waveform that is still being built: dim what is not there yet and mark how far it has got.
+      const grow = building.get(c.path);
+      if (grow && !ready.has(c.path)) {
+        const edge = x0 + ((grow.done - c.start) / c.rate) * pxPerSec;
+        const from = Math.min(x0 + w, Math.max(x0, edge));
+        ctx.fillStyle = col.inset;
+        ctx.globalAlpha = 0.55;
+        ctx.fillRect(from, RULER_H + 1, x0 + w - from, LANE_H);
+        ctx.globalAlpha = 1;
+        if (edge >= x0 && edge <= x0 + w) {
+          ctx.fillStyle = col.amber;
+          ctx.fillRect(edge - 1, RULER_H + 1, 2, LANE_H);
+        }
+      }
       // title strip: the name, and a grip to show that it can be dragged to reorder
-      const status = failed.get(c.path) ? '  [waveform unavailable]' : loading.has(c.path) ? '  [analysing…]' : '';
+      const pct = grow ? Math.min(99, Math.floor((grow.done / Math.max(1, grow.total)) * 100)) : null;
+      const status = failed.get(c.path)
+        ? '  [waveform unavailable]'
+        : loading.has(c.path)
+          ? pct != null && !ready.has(c.path)
+            ? `  [building waveform ${pct}%]`
+            : '  [analysing…]'
+          : '';
       ctx.font = '600 11px "Barlow Condensed", "Barlow", sans-serif';
       const label = `${String(i + 1).padStart(2, '0')}  ${c.name.toUpperCase()}${status}`;
       ctx.fillStyle = col.inset;
@@ -473,17 +659,23 @@
       const r = clips[0]?.rate ?? 44100;
       ctx.fillText(span < 1 ? `zoom to ${Math.max(1, Math.round(span * r))} samples` : `zoom to ${formatDuration(span)}`, marquee.x0 + 6, RULER_H + LANE_H - 10);
     }
+    if (loudness) drawLoudness(ctx, col, W);
   }
 
   $effect(() => {
     // Everything the drawing depends on, read here so the effect re-runs.
-    void [placed, selectedId, playheadSecs, pxPerSec, viewX, viewW, rev, loading, failed, dragInfo, marquee, fadeInSecs, fadeOutSecs];
+    void [placed, selectedId, playheadSecs, pxPerSec, viewX, viewW, rev, loading, building, measuringLoud, failed, dragInfo, marquee, fadeInSecs, fadeOutSecs, loudness];
     draw();
   });
 
   $effect(() => {
     void [placed, pxPerSec, viewX, viewW];
     for (const p of new Set(clips.map((c) => c.path))) ensure(p);
+    schedule();
+  });
+
+  $effect(() => {
+    void [loudness?.version, !!loudness];
     schedule();
   });
 
@@ -690,7 +882,27 @@
       }
     };
     scroller!.addEventListener('wheel', onWheel, { passive: false });
+    // The backend reports how far each waveform build has got; draw what exists.
+    let offPeaks = () => {};
+    let unmounted = false;
+    void api
+      .onPeaksProgress((p) => {
+        if (ready.has(p.path)) return;
+        building = new Map(building).set(p.path, { done: p.done, total: p.total });
+        schedule();
+      })
+      .then((un) => (unmounted ? un() : (offPeaks = un)));
+    let offLoud = () => {};
+    void api
+      .onLoudnessProgress((p) => {
+        measuringLoud = new Map(measuringLoud).set(p.path, { done: p.done, total: p.total });
+        schedule();
+      })
+      .then((un) => (unmounted ? un() : (offLoud = un)));
     return () => {
+      unmounted = true;
+      offPeaks();
+      offLoud();
       ro.disconnect();
       scroller?.removeEventListener('wheel', onWheel);
       clearTimeout(fetchTimer);
@@ -699,12 +911,12 @@
 </script>
 
 <div class="scroller" bind:this={scroller} onscroll={onscrollbar}>
-  <div class="content" style="width:{contentW}px; height:{HEIGHT}px">
+  <div class="content" style="width:{contentW}px; height:{height}px">
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
     <canvas
       bind:this={canvas}
       data-testid="timeline"
-      style="width:{viewW}px; height:{HEIGHT}px"
+      style="width:{viewW}px; height:{height}px"
       tabindex="0"
       aria-label="Waveform timeline. Click to play from that point, drag across a waveform to zoom in, drag a clip's name bar to reorder it, drag its edges to trim it. Use the buttons to split and remove."
       {onpointerdown}

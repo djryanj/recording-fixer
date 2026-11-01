@@ -2,11 +2,13 @@
 
 use crate::convert::decode_be;
 use crate::device::DeviceSelection;
-use crate::engine::{Error, Playback};
+use crate::engine::{Error, Playback, Processing};
 use crate::testing::{SimBackend, SimConfig, SimOutput};
 use aiff_core::fixtures::{self, Spec};
+use dynamics::leveler::GainCurve;
 use edit_core::Clip;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 struct Rig {
@@ -591,4 +593,97 @@ fn a_source_that_disappears_mid_playback_reports_an_error_instead_of_hanging() {
     // The engine must still answer afterwards.
     let _ = r.pb.state();
     assert!(r.pb.devices().len() == 2);
+}
+
+// ---- loudness processing while playing ----------------------------------------------------
+
+fn flat_gain(gain: f32, ceiling_db: f64) -> Processing {
+    Processing {
+        curve: Arc::new(GainCurve {
+            hop_frames: 4410,
+            gain: vec![gain],
+            static_db: 0.0,
+        }),
+        ceiling_db,
+    }
+}
+
+impl Rig {
+    fn load_processed(&self, clips: Vec<Clip>, start: f64, p: Processing) {
+        let info = self.pb.load_with(clips, start, Some(p)).expect("load");
+        let want = ((info.total_frames as f64 - start * f64::from(info.rate)) as usize).min(10_000);
+        wait(
+            || self.pb.buffered_frames() >= want,
+            "the decoder to fill the buffer",
+        );
+    }
+}
+
+#[test]
+fn processed_playback_applies_the_gain_and_keeps_every_frame_in_place() {
+    let r = rig();
+    let p = r.sine("tone.aif", 440.0, 44100);
+    // Half gain, and a ceiling nothing reaches: the limiter must do nothing.
+    r.load_processed(vec![Clip::whole(p)], 0.0, flat_gain(0.5, 0.0));
+    r.play_to_end();
+    let want: Vec<f32> = decode_all(&r, "tone.aif").iter().map(|s| s * 0.5).collect();
+    assert_audio_is(&r.out.audible(), &want);
+}
+
+fn decode_all(r: &Rig, name: &str) -> Vec<f32> {
+    let bytes = std::fs::read(r.dir.path().join(name)).unwrap();
+    let mut v = Vec::new();
+    decode_be(&bytes[54..], 16, &mut v);
+    v
+}
+
+#[test]
+fn processed_playback_never_exceeds_the_ceiling() {
+    let r = rig();
+    let p = r.sine("tone.aif", 440.0, 44100);
+    // Doubling a 0.49 sine is 0.98; the ceiling is -3 dB (0.708).
+    r.load_processed(vec![Clip::whole(p)], 0.0, flat_gain(2.0, -3.0));
+    r.play_to_end();
+    let heard = r.out.audible();
+    let peak = heard.iter().fold(0f32, |m, s| m.max(s.abs()));
+    assert!(peak <= 0.709 && peak > 0.6, "peak {peak}");
+    assert!(heard.len() >= 44100 * 2, "every frame must still come out");
+}
+
+#[test]
+fn a_seek_into_processed_audio_lands_on_the_exact_frame() {
+    let r = rig();
+    let p = r.sine("tone.aif", 440.0, 44100 * 2);
+    r.load_processed(vec![Clip::whole(p)], 1.0, flat_gain(0.5, 0.0));
+    r.play_to_end();
+    let all: Vec<f32> = decode_all(&r, "tone.aif").iter().map(|s| s * 0.5).collect();
+    // Starting a second in plays exactly the second half, with nothing lost or added at the start.
+    assert_audio_is(&r.out.audible(), &all[44100 * 2..]);
+}
+
+#[test]
+fn seeking_while_playing_processed_audio_stays_contiguous() {
+    let r = rig();
+    let p = r.sine("tone.aif", 440.0, 44100 * 3);
+    r.load_processed(vec![Clip::whole(p)], 0.0, flat_gain(0.5, 0.0));
+    r.pb.play();
+    wait(|| r.pb.state().position_secs > 0.1, "playback");
+    r.pb.seek(2.0);
+    wait(|| r.pb.state().position_secs >= 2.0, "the seek");
+    r.wait_ended();
+    let all: Vec<f32> = decode_all(&r, "tone.aif").iter().map(|s| s * 0.5).collect();
+    let tail = &all[44100 * 4..];
+    assert!(
+        find(&r.out.audible(), tail).is_some(),
+        "the last second must play contiguously after the seek"
+    );
+}
+
+#[test]
+fn without_processing_nothing_changes() {
+    let r = rig();
+    let p = r.sine("tone.aif", 440.0, 44100);
+    r.load(vec![Clip::whole(p)], 0.0);
+    r.play_to_end();
+    assert_audio_is(&r.out.audible(), &decode_all(&r, "tone.aif"));
 }

@@ -7,6 +7,8 @@ set windows-shell := ["powershell.exe", "-NoLogo", "-NoProfile", "-Command"]
 # ASIO (Windows) needs LLVM's libclang; macOS builds leave ASIO out.
 export LIBCLANG_PATH := env("LIBCLANG_PATH", if os() == "windows" { "C:\\Program Files\\LLVM\\bin" } else { "" })
 features := if os() == "macos" { "--no-default-features" } else { "" }
+# The Tauri CLI is a UI dev dependency (`just setup`); npm runs it from the repo root, where it finds src-tauri.
+tauri := "npm --prefix ui exec -- tauri"
 
 default:
     @just --list
@@ -17,7 +19,7 @@ setup:
 
 # Run the app with hot reload
 dev:
-    cargo tauri dev {{ if os() == "macos" { "-- --no-default-features" } else { "" } }}
+    {{ tauri }} dev {{ if os() == "macos" { "-- --no-default-features" } else { "" } }}
 
 # Format, lints and type check; must be clean
 check:
@@ -29,10 +31,11 @@ check:
 fmt:
     cargo fmt --all
 
-# Rust and UI unit/component tests
+# Rust and UI unit/component tests, and the release script's
 test:
     cargo test --workspace {{ features }}
     npm --prefix ui test
+    node --test "scripts/*.test.mjs"
 
 # Also run the tests that need the real sample files in the repo root
 test-samples:
@@ -48,15 +51,24 @@ e2e-diagnose:
 
 # Quick debug exe, no installer
 build-debug:
-    cargo tauri build --debug --no-bundle {{ if os() == "macos" { "-- --no-default-features" } else { "" } }}
+    {{ tauri }} build --debug --no-bundle {{ if os() == "macos" { "-- --no-default-features" } else { "" } }}
 
 # Optimised standalone app for this machine, no installer: target/release/recording-fixer(.exe)
 release:
-    cargo tauri build --no-bundle {{ if os() == "macos" { "-- --no-default-features" } else { "" } }}
+    {{ tauri }} build --no-bundle {{ if os() == "macos" { "-- --no-default-features" } else { "" } }}
 
 # Installers (NSIS/MSI on Windows, .dmg on macOS)
 build:
-    cargo tauri build {{ if os() == "macos" { "-- --no-default-features" } else { "" } }}
+    {{ tauri }} build {{ if os() == "macos" { "-- --no-default-features" } else { "" } }}
+
+# Start a release: a release/vVERSION branch from a clean main with the versions bumped (and, for a
+# final release, the changelog closed out), pushed. Then open a PR. e.g. just prepare-release 0.1.0-rc.1
+prepare-release version:
+    node scripts/release.mjs prepare {{ version }}
+
+# After that PR is merged: tag main as vVERSION and push the tag. This is the last step.
+tag-release version:
+    node scripts/release.mjs tag {{ version }}
 
 # Everything CI runs on this machine
 ci: check test e2e

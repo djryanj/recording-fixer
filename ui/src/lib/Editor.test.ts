@@ -537,6 +537,7 @@ describe('exporting', () => {
     for (const format of [/AIFF/, /MP3/, /AAC/]) {
       const { onstart, unmount } = mount([one]);
       await u.click(screen.getByRole('radio', { name: format }));
+      await u.click(screen.getByRole('tab', { name: /Fades/ }));
       await u.type(screen.getByLabelText('Fade in (seconds)'), '2');
       await u.type(screen.getByLabelText('Fade out (seconds)'), '4.5');
       await u.click(screen.getByRole('button', { name: 'Export' }));
@@ -549,6 +550,7 @@ describe('exporting', () => {
   it('turns nonsense fade values into no fade and caps long ones', async () => {
     const u = user();
     const { onstart } = mount([one]);
+    await u.click(screen.getByRole('tab', { name: /Fades/ }));
     const fin = screen.getByLabelText('Fade in (seconds)');
     const fout = screen.getByLabelText('Fade out (seconds)');
     await u.clear(fin);
@@ -562,6 +564,7 @@ describe('exporting', () => {
   it('an emptied fade field means no fade', async () => {
     const u = user();
     const { onstart } = mount([one]);
+    await u.click(screen.getByRole('tab', { name: /Fades/ }));
     const fin = screen.getByLabelText('Fade in (seconds)');
     await u.type(fin, '3');
     await u.clear(fin);
@@ -572,6 +575,7 @@ describe('exporting', () => {
   it('with one file per clip, every file gets its own fades', async () => {
     const u = user();
     const { onstart } = mount([one, two]);
+    await u.click(screen.getByRole('tab', { name: /Fades/ }));
     await u.type(screen.getByLabelText('Fade in (seconds)'), '1');
     await u.type(screen.getByLabelText('Fade out (seconds)'), '1');
     await u.click(screen.getByRole('radio', { name: /One file per clip/ }));
@@ -584,11 +588,13 @@ describe('exporting', () => {
   it('remembers the fades for next time', async () => {
     const u = user();
     mount([one]);
+    await u.click(screen.getByRole('tab', { name: /Fades/ }));
     await u.type(screen.getByLabelText('Fade in (seconds)'), '3');
     await u.type(screen.getByLabelText('Fade out (seconds)'), '6');
     await u.click(screen.getByRole('button', { name: 'Export' }));
     expect(JSON.parse(localStorage.getItem('exportSettings.v1')!)).toMatchObject({ fadeIn: 3, fadeOut: 6 });
     mount([one]);
+    await u.click(screen.getAllByRole('tab', { name: /Fades/ }).at(-1)!);
     expect((screen.getAllByLabelText('Fade in (seconds)').at(-1) as HTMLInputElement).value).toBe('3');
     expect((screen.getAllByLabelText('Fade out (seconds)').at(-1) as HTMLInputElement).value).toBe('6');
   });

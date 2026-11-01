@@ -118,6 +118,13 @@ describe('transport', () => {
     expect(mocked.audioPlay).not.toHaveBeenCalled();
   });
 
+  it('play does not claim to be playing when nothing is loaded (e.g. no audio device)', async () => {
+    // Showing Pause until the next poll made the e2e suite see playback that never happened.
+    const a = new AudioStore();
+    await a.play();
+    expect(a.state.playing).toBe(false);
+  });
+
   it('seek clamps to the material and reports the new position at once', async () => {
     const a = new AudioStore();
     a.state = state({ loaded: true, duration_secs: 100 });
@@ -140,7 +147,7 @@ describe('transport', () => {
     const a = new AudioStore();
     mocked.audioLoad.mockResolvedValue({ duration_secs: 5, total_frames: 1, rate: 44100, channels: 2, bits: 16 });
     await a.preview('C:/r/a.aif', 'a.aif');
-    expect(mocked.audioLoad).toHaveBeenCalledWith([{ path: 'C:/r/a.aif', start_frame: 0, end_frame: null }], 0);
+    expect(mocked.audioLoad).toHaveBeenCalledWith([{ path: 'C:/r/a.aif', start_frame: 0, end_frame: null }], 0, null);
     expect(mocked.audioPlay).toHaveBeenCalled();
     expect(a.label).toBe('a.aif');
   });

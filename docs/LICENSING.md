@@ -19,12 +19,12 @@ Why this one: Steinberg's ASIO SDK, compiled into the app for ASIO output, is av
 | Steinberg ASIO SDK (via cpal's `asio-sys`) | GPLv3 or Steinberg proprietary | used under the GPLv3; add the trademark line below |
 | ffmpeg | separate program, run as a subprocess | LGPL build for any bundled copy; ffmpeg's license applies to that binary, not to this code |
 | Apple `CoreAudioToolbox.dll` | Apple | loaded from the user's own install at runtime; never shipped or downloaded |
-| VST3 SDK (stretch goal) | MIT since v3.8 | |
 
 ## Things to keep doing
 
 - Keep the trademark notice wherever ASIO is mentioned: *"ASIO is a registered trademark of Steinberg Media Technologies GmbH."*
 - The name uses "for Serato DJ" only to say what it works with, with a "not affiliated with Serato" statement in the README and in Settings > About (not elsewhere in the window). Do not use their logo.
-- If a release bundles ffmpeg: an **LGPL** build, its license text, and a link to its exact source. Never `libfdk_aac`; never Apple's DLL.
+- Releases bundle ffmpeg (an **LGPL** build, no `--enable-gpl`, no `--enable-nonfree`; see [THIRD-PARTY.md](THIRD-PARTY.md) and `scripts/fetch-ffmpeg.mjs`). Each release records the exact build and where its source is. Never `libfdk_aac`; never Apple's DLL.
+- Release builds include ASIO by default (decided): the app is GPLv3, which is the licence the ASIO SDK is used under.
 - If an outside contribution is ever accepted, it comes in under the same license.
 - Optional hardening: `cargo deny check licenses` in CI would stop a non-GPL-compatible dependency from slipping in unnoticed.

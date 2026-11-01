@@ -114,12 +114,17 @@ fn parse(b: &[u8]) -> Result<Peaks> {
 
 /// Delete least-recently-modified cache files until the folder is at most `max_bytes`.
 pub fn prune(dir: &Path, max_bytes: u64) -> std::io::Result<()> {
+    prune_ext(dir, "peaks", max_bytes)
+}
+
+/// [`prune`] for cache files with another extension (other kinds of cache share this scheme).
+pub fn prune_ext(dir: &Path, ext: &str, max_bytes: u64) -> std::io::Result<()> {
     let Ok(rd) = fs::read_dir(dir) else {
         return Ok(());
     };
     let mut files: Vec<(SystemTime, u64, PathBuf)> = rd
         .flatten()
-        .filter(|e| e.path().extension().is_some_and(|x| x == "peaks"))
+        .filter(|e| e.path().extension().is_some_and(|x| x == ext))
         .filter_map(|e| {
             let m = e.metadata().ok()?;
             Some((m.modified().ok()?, m.len(), e.path()))

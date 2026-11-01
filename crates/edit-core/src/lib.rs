@@ -188,6 +188,17 @@ impl Plan {
 
     /// Like [`write_aiff`](Self::write_aiff), with fades.
     pub fn write_aiff_faded(&self, dst: &Path, fade: Fade, progress: Progress) -> Result<()> {
+        self.write_aiff_from(dst, &mut self.reader_faded(fade), progress)
+    }
+
+    /// Like [`write_aiff`](Self::write_aiff), but taking the audio from `source`: the plan's own
+    /// format and length, with any processing (fades, loudness) already applied by the caller.
+    pub fn write_aiff_from(
+        &self,
+        dst: &Path,
+        source: &mut dyn Read,
+        progress: Progress,
+    ) -> Result<()> {
         let bytes = self.total_bytes();
         if !fits_in_aiff(bytes) || self.total_frames > u64::from(u32::MAX) {
             return Err(Error::TooLarge);
@@ -199,7 +210,7 @@ impl Plan {
                 self.total_frames as u32,
                 bytes,
             ))?;
-            pump(&mut self.reader_faded(fade), &mut out, bytes, progress)?;
+            pump(source, &mut out, bytes, progress)?;
             if bytes & 1 == 1 {
                 out.write_all(&[0])?;
             }

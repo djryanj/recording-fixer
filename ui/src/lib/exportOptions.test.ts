@@ -2,14 +2,17 @@ import { describe, expect, it } from 'vitest';
 import type { ToolStatus } from './api';
 import {
   AAC_CBR,
+  buildLoudness,
   buildTarget,
   clampFade,
   defaultFormat,
+  defaultLoudness,
   encoderLabel,
   estimateKbps,
   MP3_CBR,
   MP3_VBR,
   qualityLabel,
+  sanitizeLoudness,
   sanitizeFormat,
   type FormatState,
 } from './exportOptions';
@@ -130,5 +133,30 @@ describe('clampFade', () => {
   it('turns nonsense into no fade and caps long ones at a minute', () => {
     for (const bad of [-5, NaN, Infinity, null, undefined]) expect(clampFade(bad as number)).toBe(0);
     expect(clampFade(600)).toBe(60);
+  });
+});
+describe('loudness options', () => {
+  it('is off by default and sends nothing', () => {
+    expect(defaultLoudness().mode).toBe('off');
+    expect(buildLoudness(defaultLoudness())).toBeNull();
+  });
+
+  it('builds the job from the form, keeping numbers in range', () => {
+    expect(buildLoudness({ mode: 'lufs', lufs: -14, ceiling: -1, leveling: 'medium', preview: true })).toEqual({ mode: 'lufs', lufs: -14, ceiling_db: -1, leveling: 'medium' });
+    expect(buildLoudness({ mode: 'lufs', lufs: 5, ceiling: -50, leveling: 'strong', preview: true })).toEqual({ mode: 'lufs', lufs: -3, ceiling_db: -20, leveling: 'strong' });
+    // An empty field falls back to the usual value rather than sending NaN.
+    expect(buildLoudness({ mode: 'lufs', lufs: null, ceiling: null, leveling: 'gentle', preview: true })).toEqual({ mode: 'lufs', lufs: -14, ceiling_db: -1, leveling: 'gentle' });
+  });
+
+  it('peak mode is a steady gain: no evening out', () => {
+    expect(buildLoudness({ mode: 'peak', lufs: -14, ceiling: -0.1, leveling: 'strong', preview: true })).toMatchObject({ mode: 'peak', ceiling_db: -0.1, leveling: 'off' });
+  });
+
+  it('repairs whatever was saved', () => {
+    expect(sanitizeLoudness(undefined)).toEqual(defaultLoudness());
+    expect(sanitizeLoudness({ mode: 'bogus' as never, lufs: NaN, leveling: 'x' as never })).toEqual(defaultLoudness());
+    expect(sanitizeLoudness({ mode: 'peak', lufs: -9, ceiling: -0.5, leveling: 'gentle', preview: false })).toEqual({ mode: 'peak', lufs: -9, ceiling: -0.5, leveling: 'gentle', preview: false });
+    // Saved before the preview switch existed: it defaults to on.
+    expect(sanitizeLoudness({ mode: 'lufs', lufs: -14, ceiling: -1, leveling: 'medium' }).preview).toBe(true);
   });
 });

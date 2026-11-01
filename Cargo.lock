@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "aiff-core"
-version = "0.1.0"
+version = "0.1.0-rc.2"
 dependencies = [
  "tempfile",
  "thiserror 2.0.21",
@@ -1009,8 +1009,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
+name = "dynamics"
+version = "0.1.0-rc.2"
+dependencies = [
+ "aiff-core",
+ "edit-core",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "edit-core"
-version = "0.1.0"
+version = "0.1.0-rc.2"
 dependencies = [
  "aiff-core",
  "tempfile",
@@ -1119,7 +1129,7 @@ dependencies = [
 
 [[package]]
 name = "export"
-version = "0.1.0"
+version = "0.1.0-rc.2"
 dependencies = [
  "aiff-core",
  "edit-core",
@@ -2191,7 +2201,7 @@ dependencies = [
 
 [[package]]
 name = "library"
-version = "0.1.0"
+version = "0.1.0-rc.2"
 dependencies = [
  "aiff-core",
  "dirs",
@@ -2780,7 +2790,7 @@ dependencies = [
 
 [[package]]
 name = "peaks"
-version = "0.1.0"
+version = "0.1.0-rc.2"
 dependencies = [
  "aiff-core",
  "tempfile",
@@ -2871,10 +2881,11 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
 name = "playback"
-version = "0.1.0"
+version = "0.1.0-rc.2"
 dependencies = [
  "aiff-core",
  "cpal",
+ "dynamics",
  "edit-core",
  "ringbuf",
  "rubato",
@@ -3087,12 +3098,14 @@ dependencies = [
 
 [[package]]
 name = "recording-fixer"
-version = "0.1.0"
+version = "0.1.0-rc.2"
 dependencies = [
  "aiff-core",
+ "dynamics",
  "edit-core",
  "export",
  "library",
+ "log",
  "peaks",
  "playback",
  "serde",
@@ -3101,6 +3114,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
+ "tempfile",
 ]
 
 [[package]]

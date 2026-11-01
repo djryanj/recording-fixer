@@ -2,7 +2,7 @@
   "name": "recording-fixer-ui",
   "private": true,
   "license": "GPL-3.0-or-later",
-  "version": "0.1.0",
+  "version": "0.1.0-rc.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -20,6 +20,7 @@
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7",
+    "@tauri-apps/cli": "^2.12.4",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/svelte": "^5.4.2",
     "@testing-library/user-event": "^14.6.8",

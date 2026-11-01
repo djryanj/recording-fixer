@@ -1,10 +1,14 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import type { ToolStatus } from './api';
-  import { appVersion, ISSUES_URL, openLink, REPO_URL } from './about';
-  import { clampFade, defaultFormat, encoderLabel, sanitizeFormat, type FormatState } from './exportOptions';
+  import { appVersion, GUIDE_URL, ISSUES_URL, openLink, PRIVACY_URL, REPO_URL } from './about';
+  import { api, type UpdateInfo } from './api';
+  import { checkForUpdate, setUpdateChecks, updateChecksEnabled } from './updates';
+  import { clampFade, defaultFormat, encoderLabel, sanitizeFormat, sanitizeLoudness, type FormatState, type LoudnessState } from './exportOptions';
   import { loadSavedExport, patchSavedExport } from './exportSettings';
+  import FadesPanel from './FadesPanel.svelte';
   import FormatPanel from './FormatPanel.svelte';
+  import LoudnessPanel from './LoudnessPanel.svelte';
 
   interface Props {
     tool: ToolStatus | null;
@@ -24,17 +28,53 @@
   let appVer = $state('');
   onMount(() => void appVersion().then((v) => (appVer = v)));
 
+  let autoCheck = $state(updateChecksEnabled());
+  let checking = $state(false);
+  let checked = $state<UpdateInfo | null>(null);
+  let checkError = $state('');
+  async function checkNow() {
+    checking = true;
+    checkError = '';
+    checked = null;
+    try {
+      checked = await checkForUpdate();
+    } catch (e) {
+      checkError = String(e);
+    } finally {
+      checking = false;
+    }
+  }
+
+  let logNote = $state('');
+  async function showLog() {
+    try {
+      await api.reveal(await api.logLocation());
+    } catch (e) {
+      logNote = `Could not open the log folder: ${e}`;
+    }
+  }
+  async function copyLog() {
+    try {
+      await navigator.clipboard.writeText(await api.readLog());
+      logNote = 'Copied. Paste it into your bug report.';
+    } catch (e) {
+      logNote = `Could not copy the log: ${e}. Use "Show log file" and attach the file instead.`;
+    }
+  }
+
   // The same remembered choices the export editor starts from, so what is set here is what a new export begins with.
   const saved = untrack(() => loadSavedExport());
   // svelte-ignore state_referenced_locally
   let format = $state<FormatState>(sanitizeFormat({ ...defaultFormat(tool), ...saved.format }, tool));
   let fadeIn = $state<number | null>(saved.fadeIn ?? 0);
   let fadeOut = $state<number | null>(saved.fadeOut ?? 0);
+  // svelte-ignore state_referenced_locally
+  let loudness = $state<LoudnessState>(sanitizeLoudness(saved.loudness));
 
   // Save only when something is changed here, not just for opening the window.
   let untouched = true;
   $effect(() => {
-    const patch = { format: $state.snapshot(format), fadeIn: clampFade(fadeIn), fadeOut: clampFade(fadeOut) };
+    const patch = { format: $state.snapshot(format), fadeIn: clampFade(fadeIn), fadeOut: clampFade(fadeOut), loudness: $state.snapshot(loudness) };
     if (untouched) {
       untouched = false;
       return;
@@ -52,7 +92,18 @@
     <section aria-label="Default export">
       <h3 class="label">Default export</h3>
       <p class="why">What a new export starts with. You can still change it for any one export in the editor, which then remembers what you used last.</p>
-      <FormatPanel bind:format bind:fadeIn bind:fadeOut {tool} durationSecs={null} aiffBytes={null} onlocate={onchoose} />
+      <FormatPanel bind:format {tool} durationSecs={null} aiffBytes={null} onlocate={onchoose} />
+    </section>
+
+    <section aria-label="Default fades">
+      <h3 class="label">Default fades</h3>
+      <FadesPanel bind:fadeIn bind:fadeOut />
+    </section>
+
+    <section aria-label="Default loudness">
+      <h3 class="label">Default loudness</h3>
+      <p class="why">Whether new exports change the loudness. Off keeps the audio exactly as recorded.</p>
+      <LoudnessPanel bind:loudness />
     </section>
 
     <section aria-label="ffmpeg">
@@ -72,7 +123,7 @@
           {:else}
             <i class="led bad"></i> <b>Not found.</b> MP3 and AAC export are unavailable until it is.
             <div class="muted">
-              Install it (on Windows: <code>winget install Gyan.FFmpeg</code>, or download from ffmpeg.org), then reopen this window, or point the app at it yourself.
+              Install it (on Windows: <code>winget install Gyan.FFmpeg</code>; on a Mac: <code>brew install ffmpeg</code>; or download from ffmpeg.org), then reopen this window, or point the app at it yourself.
             </div>
           {/if}
         </dd>
@@ -114,6 +165,40 @@
       </div>
     </section>
 
+    <section aria-label="Updates and privacy">
+      <h3 class="label">Updates and privacy</h3>
+      <p class="why">
+        This app collects nothing and sends nothing about you or your files. The one thing it can do online is ask GitHub's public
+        release list whether a newer version exists (a plain web request, no identifier, at most once a day). It never installs anything.
+      </p>
+      <label class="check"><input type="checkbox" bind:checked={autoCheck} onchange={() => setUpdateChecks(autoCheck)} /> Look for a newer version when the app starts</label>
+      <div class="row">
+        <button onclick={checkNow} disabled={checking}>{checking ? 'Checking…' : 'Check now'}</button>
+        {#if checked?.newer && checked.url}
+          <span role="status"><i class="led busy"></i> Version <b>{checked.latest}</b> is available.</span>
+          <button onclick={() => openLink(checked!.url!)}>View the release</button>
+        {:else if checked}
+          <span role="status"><i class="led ok"></i> {checked.latest ? 'You have the latest version.' : 'No release has been published yet.'}</span>
+        {:else if checkError}
+          <span role="status" class="muted"><i class="led bad"></i> Could not check: {checkError}</span>
+        {/if}
+        <button class="ghost" onclick={() => openLink(PRIVACY_URL)}>Privacy policy</button>
+      </div>
+    </section>
+
+    <section aria-label="Troubleshooting">
+      <h3 class="label">Troubleshooting</h3>
+      <p class="why">
+        The app keeps a log of what it did and any errors, in a file on this computer. It is never sent anywhere: if you report a problem,
+        you choose whether to include it. It can contain the names of the recordings you worked with, so glance at it first.
+      </p>
+      <div class="row">
+        <button onclick={showLog}>Show log file</button>
+        <button onclick={copyLog}>Copy log to clipboard</button>
+        {#if logNote}<span class="muted" role="status">{logNote}</span>{/if}
+      </div>
+    </section>
+
     <section aria-label="About">
       <h3 class="label">About</h3>
       <p class="why">
@@ -122,6 +207,7 @@
         ASIO is a registered trademark of Steinberg Media Technologies GmbH.
       </p>
       <div class="row">
+        <button onclick={() => openLink(GUIDE_URL)}>User guide</button>
         <button onclick={() => openLink(ISSUES_URL)}>Report an issue on GitHub</button>
         <button class="ghost" onclick={() => openLink(REPO_URL)}>Source code</button>
       </div>
@@ -204,6 +290,12 @@
     margin-left: 8px;
     font-size: 11.5px;
     color: var(--amber);
+  }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
   }
   .row {
     display: flex;

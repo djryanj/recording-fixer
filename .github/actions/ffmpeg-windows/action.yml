@@ -1,0 +1,44 @@
+name: ffmpeg (Windows)
+description: >-
+  Puts a pinned ffmpeg/ffprobe on PATH, cached between runs. Faster than Chocolatey (which fetched the
+  same Gyan build each time) and the version only changes when this file does.
+
+inputs:
+  version:
+    description: Gyan.dev release tag (github.com/GyanD/codexffmpeg).
+    default: "9.0.2"
+  sha256:
+    description: SHA-256 of ffmpeg-<version>-essentials_build.zip, from the release's asset digest.
+    default: 60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba
+
+runs:
+  using: composite
+  steps:
+    - id: cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.tool_cache }}/ffmpeg-${{ inputs.version }}
+        key: ffmpeg-windows-${{ inputs.version }}-${{ inputs.sha256 }}
+
+    - if: steps.cache.outputs.cache-hit != 'true'
+      shell: pwsh
+      env:
+        VERSION: ${{ inputs.version }}
+        SHA256: ${{ inputs.sha256 }}
+        DEST: ${{ runner.tool_cache }}/ffmpeg-${{ inputs.version }}
+      run: |
+        $zip = Join-Path $env:RUNNER_TEMP 'ffmpeg.zip'
+        Invoke-WebRequest "https://github.com/GyanD/codexffmpeg/releases/download/$env:VERSION/ffmpeg-$env:VERSION-essentials_build.zip" -OutFile $zip
+        $actual = (Get-FileHash $zip -Algorithm SHA256).Hash
+        if ($actual -ne $env:SHA256) { throw "ffmpeg zip checksum mismatch: got $actual" }
+        $unpacked = Join-Path $env:RUNNER_TEMP 'ffmpeg-unpacked'
+        Expand-Archive $zip $unpacked -Force
+        New-Item -ItemType Directory -Force $env:DEST | Out-Null
+        Copy-Item (Join-Path $unpacked "ffmpeg-$env:VERSION-essentials_build/bin/*.exe") $env:DEST
+
+    - shell: pwsh
+      env:
+        DEST: ${{ runner.tool_cache }}/ffmpeg-${{ inputs.version }}
+      run: |
+        $env:DEST | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+        & (Join-Path $env:DEST 'ffmpeg.exe') -hide_banner -version | Select-Object -First 1

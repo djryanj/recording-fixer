@@ -77,6 +77,19 @@ pub fn build<R: Read>(
     frames: u64,
     progress: &mut dyn FnMut(u64, u64) -> bool,
 ) -> Result<Peaks> {
+    build_with(reader, format, frames, progress, &mut |_| {})
+}
+
+/// Like [`build`], but also hands over the finest-level buckets as soon as each chunk of audio has
+/// produced them (`[min, max]` pairs, in order, each bucket `BASE` frames), so a caller can draw the
+/// waveform while it is still being built.
+pub fn build_with<R: Read>(
+    reader: &mut R,
+    format: &Format,
+    frames: u64,
+    progress: &mut dyn FnMut(u64, u64) -> bool,
+    on_buckets: &mut dyn FnMut(&[i8]),
+) -> Result<Peaks> {
     let align = format.block_align() as usize;
     let sample_bytes = format.bytes_per_sample() as usize;
     let channels = usize::from(format.channels);
@@ -84,6 +97,7 @@ pub fn build<R: Read>(
     let mut base: Vec<i8> = Vec::with_capacity((frames / BASE + 1) as usize * 2);
     let (mut min, mut max, mut in_bucket) = (i8::MAX, i8::MIN, 0u64);
     let mut done = 0u64;
+    let mut announced = 0usize;
     while done < frames {
         let n = (frames - done).min(CHUNK_FRAMES) as usize;
         reader.read_exact(&mut buf[..n * align])?;
@@ -105,27 +119,40 @@ pub fn build<R: Read>(
             }
         }
         done += n as u64;
+        on_buckets(&base[announced..]);
+        announced = base.len();
         if !progress(done, frames) {
             return Err(Error::Cancelled);
         }
     }
     if in_bucket > 0 {
         base.extend([min, max]);
+        on_buckets(&base[announced..]);
     }
     Ok(pyramid(base, frames))
 }
 
 /// Build peaks for a whole AIFF file (healthy or broken) by streaming its audio.
 pub fn build_for_file(path: &Path, progress: &mut dyn FnMut(u64, u64) -> bool) -> Result<Peaks> {
+    build_for_file_with(path, progress, &mut |_| {})
+}
+
+/// [`build_for_file`] with the finer-level buckets handed over as they are made (see [`build_with`]).
+pub fn build_for_file_with(
+    path: &Path,
+    progress: &mut dyn FnMut(u64, u64) -> bool,
+    on_buckets: &mut dyn FnMut(&[i8]),
+) -> Result<Peaks> {
     use std::io::{BufReader, Seek, SeekFrom};
     let d = aiff_core::diagnose_path(path)?;
     let mut f = std::fs::File::open(path)?;
     f.seek(SeekFrom::Start(d.audio_start))?;
-    build(
+    build_with(
         &mut BufReader::with_capacity(1 << 20, f),
         &d.format,
         d.frames,
         progress,
+        on_buckets,
     )
 }
 
@@ -177,6 +204,15 @@ pub fn read_samples(path: &Path, start: u64, end: u64) -> Result<Vec<i16>> {
 }
 
 impl Peaks {
+    /// What a build has produced so far: only the finest level, covering the first `frames` frames.
+    /// Good enough to draw from while the rest is still being made.
+    pub fn partial(base: Vec<i8>, frames: u64) -> Peaks {
+        Peaks {
+            frames,
+            levels: vec![base],
+        }
+    }
+
     /// Reduce the frame range `[start, end)` to `width` columns of `[min, max]` (interleaved).
     /// Uses the coarsest level that still has at least one bucket per column.
     pub fn columns(&self, start: u64, end: u64, width: usize) -> Vec<i8> {
@@ -192,6 +228,9 @@ impl Peaks {
             .unwrap_or(0);
         let (bucket, data) = (bucket_frames(level), &self.levels[level]);
         let buckets = data.len() / 2;
+        if buckets == 0 {
+            return Vec::new();
+        }
         let mut out = Vec::with_capacity(width * 2);
         for x in 0..width {
             let a = start + (span as u128 * x as u128 / width as u128) as u64;
@@ -340,6 +379,66 @@ mod tests {
         )
         .unwrap();
         assert_eq!(p.levels[0], vec![0, 0, -128, 127]);
+    }
+
+    #[test]
+    fn buckets_are_handed_over_as_they_are_made_and_add_up_to_the_result() {
+        let spec = Spec {
+            rate: 8000,
+            channels: 2,
+            bits: 16,
+            frames: (CHUNK_FRAMES * 3 + 1000) as u32,
+        };
+        let pcm = fixtures::pcm(spec, 5);
+        let (mut got, mut calls, mut seen_during) = (Vec::new(), 0, Vec::new());
+        let p = build_with(
+            &mut &pcm[..],
+            &spec.format(),
+            u64::from(spec.frames),
+            &mut |done, _| {
+                seen_during.push(done);
+                true
+            },
+            &mut |new| {
+                calls += 1;
+                got.extend_from_slice(new);
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            got, p.levels[0],
+            "everything handed over, in order, nothing twice"
+        );
+        assert!(
+            calls >= 4,
+            "one hand-over per chunk, not one at the end ({calls})"
+        );
+        assert_eq!(seen_during.len(), 4);
+    }
+
+    #[test]
+    fn a_partial_build_can_already_be_drawn() {
+        let spec = Spec {
+            rate: 8000,
+            channels: 1,
+            bits: 8,
+            frames: (CHUNK_FRAMES * 4) as u32,
+        };
+        let pcm = fixtures::pcm(spec, 6);
+        let full = build(
+            &mut &pcm[..],
+            &spec.format(),
+            u64::from(spec.frames),
+            &mut no_progress(),
+        )
+        .unwrap();
+        let done = CHUNK_FRAMES; // one chunk in
+        let partial = Peaks::partial(full.levels[0][..(done / BASE) as usize * 2].to_vec(), done);
+        assert!(Peaks::partial(Vec::new(), 0).columns(0, 100, 10).is_empty());
+        let cols = partial.columns(0, done, 64);
+        assert_eq!(cols.len(), 128);
+        // The same stretch from the finished build, at the same width, agrees.
+        assert_eq!(cols, full.columns(0, done, 64));
     }
 
     #[test]

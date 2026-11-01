@@ -28,27 +28,24 @@ Caveats to verify with more samples (we have only one):
 2. File list first; waveform editor second.
 3. Waveform view over files of ~1–3 GB: needs a precomputed min/max peak cache, not decoding on draw.
 4. ffmpeg only for mp3/aac export (and resampling edge cases). AIFF repair and same-format concatenation are pure byte work and should be done in-process.
-5. Stretch: VST3 hosting (effects on export or preview).
 
-6. **Speed and memory are paramount.** Inputs reach several GB. This favours a native Rust core (no GC, memory-mapped and streamed I/O, predictable footprint) with a thin web UI that only ever receives pixel-sized binary peak buffers. It also argues against Electron's heavier baseline. See the budgets in CLAUDE.md.
+5. **Speed and memory are paramount.** Inputs reach several GB. This favours a native Rust core (no GC, memory-mapped and streamed I/O, predictable footprint) with a thin web UI that only ever receives pixel-sized binary peak buffers. It also argues against Electron's heavier baseline. See the budgets in CLAUDE.md.
 
 ## 3. Stack options
 
-| Option | List/UI | Waveform | Byte-level file work | VST3 | Verdict |
-|---|---|---|---|---|---|
-| **Tauri 2 + Rust core + Svelte/TS UI** | Excellent (web UI) | Canvas, fine | Excellent (Rust, mmap, safe) | Weak: no mature Rust host | **Recommended** |
-| Electron + Node | Excellent | Fine | OK | Needs native addon | Heavier (~150 MB), no advantage over Tauri |
-| JUCE (C++) | Adequate, dated look | Good, built in | OK, more footguns | **Best**: hosting is built in | Best only if VST3 is the main goal |
-| Python + Qt | Good | OK | OK | Poor (pedalboard works for offline FX only) | Packaging on mac/win is the pain |
-| .NET MAUI / Avalonia | Good | OK | Good | NAudio-era hosting is poor | No advantage |
+| Option | List/UI | Waveform | Byte-level file work | Verdict |
+|---|---|---|---|---|
+| **Tauri 2 + Rust core + Svelte/TS UI** | Excellent (web UI) | Canvas, fine | Excellent (Rust, mmap, safe) | **Recommended** |
+| Electron + Node | Excellent | Fine | OK | Heavier (~150 MB), no advantage over Tauri |
+| JUCE (C++) | Adequate, dated look | Good, built in | OK, more footguns | A C++ audio toolkit; no advantage for a list-first utility |
+| Python + Qt | Good | OK | OK | Packaging on mac/win is the pain |
+| .NET MAUI / Avalonia | Good | OK | Good | No advantage |
 
 **Recommendation: Tauri 2 (Rust backend) + Svelte + TypeScript.**
 - The repair, concat and peak-cache code is where correctness matters. Rust suits it, with `cargo test`, no GC pauses and cheap memory-mapped I/O.
 - Tauri's installers are small, and it uses WebView2 (preinstalled on Windows 11) and WKWebView on macOS.
 - A list-heavy UI is easiest on the web stack. The waveform view is a `<canvas>` fed pre-reduced peaks.
 - ffmpeg is invoked as a subprocess (Tauri "sidecar", or found on PATH). We do **not** link it. This avoids LGPL/GPL redistribution questions: ship an LGPL build, or let the user point to their own.
-
-**VST3 plan (stretch).** Do not build it into the Tauri process. Put it behind a narrow interface: `process(buffer) -> buffer` for offline render. When we get there, build a small separate **JUCE-based plugin-host sidecar** (CLI: load plugin, load state, render file A to file B). It keeps GPL/VST3 licensing (VST3 SDK is now MIT) and crash isolation out of the main app, so a misbehaving plugin cannot take the app down. Design the export pipeline now as a chain of stages (`read → [fx] → encode`) so the slot exists.
 
 ## 4. Native Windows vs devcontainer
 
@@ -96,4 +93,3 @@ TDD works well for the core and poorly for the pixels. Split accordingly:
 2. Not-yet-written files while Serato is running (handled by a lock/mtime check).
 3. Serato's recording folder semantics: does "Recording temp" hold in-progress or orphaned files? Confirm on a real session.
 4. ffmpeg distribution: bundled LGPL build vs. user-supplied. Decide before the first release.
-5. VST3 hosting is the one piece likely to force a second language (C++/JUCE). Keep it isolated.

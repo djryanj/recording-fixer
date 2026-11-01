@@ -1,10 +1,9 @@
-// End-to-end tests: the real built app, driven through tauri-driver + Edge WebDriver.
+// End-to-end tests: the real built app, driven through Edge WebDriver. msedgedriver starts a WebView2
+// app itself; tauri-driver would only translate the capabilities for it.
 //
 // Prerequisites (see README "Testing"):
-//   cargo install tauri-driver --locked
-//   an msedgedriver matching the installed WebView2 runtime, in tests/e2e/.tools/edgedriver/ (or EDGEDRIVER)
-//   cargo tauri build --debug --no-bundle        (the app under test)
-//   npm --prefix tests/e2e install
+//   an msedgedriver matching the installed WebView2 runtime, in ui/e2e/.tools/edgedriver/ (or EDGEDRIVER)
+//   npm --prefix ui exec -- tauri build --debug --no-bundle        (the app under test)
 //
 // Every test works on synthetic recordings in a temp folder that the app is pointed at with
 // RECORDING_FIXER_FOLDERS, with its own WebView2 profile, so nothing of the user's is touched.
@@ -23,6 +22,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '../..');
 const exe = process.env.APP_EXE ?? join(root, 'target', 'debug', process.platform === 'win32' ? 'recording-fixer.exe' : 'recording-fixer');
 const edgedriver = process.env.EDGEDRIVER ?? join(here, '.tools', 'edgedriver', 'msedgedriver.exe');
+// The version the app under test must report: the one in the root Cargo.toml (release candidates too).
+const APP_VERSION = /\[workspace\.package\][^[]*?^version\s*=\s*"([^"]+)"/ms.exec(readFileSync(join(root, 'Cargo.toml'), 'utf8').replace(/\r\n/g, '\n'))[1];
 
 // ---- synthetic AIFF files ---------------------------------------------------------------------
 
@@ -95,7 +96,7 @@ async function waitForPort(port, ms = 15000) {
     if (await canConnect(port)) return;
     await new Promise((r) => setTimeout(r, 150));
   }
-  throw new Error(`tauri-driver did not start on port ${port}`);
+  throw new Error(`msedgedriver did not start on port ${port}`);
 }
 let work, driverProc, driver;
 const files = {};
@@ -154,7 +155,7 @@ async function rescan() {
 }
 
 before(async () => {
-  assert.ok(existsSync(exe), `build the app first (cargo tauri build --debug --no-bundle): ${exe} not found`);
+  assert.ok(existsSync(exe), `build the app first (just build-debug):${exe} not found`);
   assert.ok(existsSync(edgedriver), `msedgedriver not found at ${edgedriver} (set EDGEDRIVER)`);
 
   work = mkdtempSync(join(tmpdir(), 'srf-e2e-'));
@@ -168,18 +169,19 @@ before(async () => {
   const old = new Date(Date.now() - 3600_000);
   (await import('node:fs')).utimesSync(files.broken, old, old);
 
-  // Keep tauri-driver's output: when the session cannot start (it happened on CI only), this is the
-  // only trace of why.
+  // Keep the driver's output: when the session cannot start (it happened on CI only), this is the
+  // only trace of why. The app inherits this environment through msedgedriver.
   const logDir = join(here, '.tools', 'logs');
   mkdirSync(logDir, { recursive: true });
-  const driverLog = join(logDir, 'tauri-driver.log');
+  const driverLog = join(logDir, 'msedgedriver.log');
   const logFd = openSync(driverLog, 'w');
   const port = await freePort();
-  driverProc = spawn('tauri-driver', ['--port', String(port), '--native-driver', edgedriver], {
+  driverProc = spawn(edgedriver, [`--port=${port}`], {
     stdio: ['ignore', logFd, logFd],
     env: {
       ...process.env,
       RECORDING_FIXER_FOLDERS: work,
+      RECORDING_FIXER_NO_UPDATE_CHECK: '1', // tests never touch the network
       WEBVIEW2_USER_DATA_FOLDER: join(work, '.webview'),
     },
   });
@@ -188,10 +190,10 @@ before(async () => {
     await waitForPort(port);
     driver = await new Builder()
       .usingServer(`http://127.0.0.1:${port}/`)
-      .withCapabilities({ browserName: 'wry', 'tauri:options': { application: exe } })
+      .withCapabilities({ browserName: 'webview2', 'ms:edgeOptions': { binary: exe, webviewOptions: {} } })
       .build();
   } catch (e) {
-    console.error(`tauri-driver output (${driverLog}):
+    console.error(`msedgedriver output (${driverLog}):
 ${readFileSync(driverLog, 'utf8') || '<empty>'}`);
     throw e;
   }
@@ -313,11 +315,33 @@ describe('the real app', () => {
     assert.match(text, /AIFF/);
     assert.match(text, /Found/i);
     assert.match(text, /best first/i);
-    await driver.wait(async () => /v0\.1\.0/.test(await dialog.getText()), 5000, 'About to show the real app version');
+    await driver.wait(async () => (await dialog.getText()).includes(`v${APP_VERSION}`), 5000, 'About to show the real app version');
     assert.match(text, /Report an issue on GitHub/i);
-    assert.match(await driver.findElement(By.css('footer.status .ver')).getText(), /^v0\.1\.0$/i, 'the status bar shows the version');
+    assert.equal((await driver.findElement(By.css('footer.status .ver')).getText()).toLowerCase(), `v${APP_VERSION}`.toLowerCase(), 'the status bar shows the version');
     await clickXp("//div[@role='dialog']" + XP.button('Done'));
     await driver.wait(async () => (await driver.findElements(By.xpath("//div[@aria-label='Settings']"))).length === 0, 5000);
+  });
+
+  // Only when testing the installer that comes without ffmpeg (the release workflow hides any ffmpeg on the PATH).
+  it('starts without ffmpeg and says so', { skip: !process.env.E2E_EXPECT_NO_FFMPEG }, async () => {
+    const button = await find("//button[contains(.,'Settings')]");
+    assert.match(await button.getText(), /needs ffmpeg/i, 'the Settings button flags the missing ffmpeg');
+    await button.click();
+    const dialog = await find("//div[@role='dialog'][@aria-label='Settings']");
+    assert.match(await dialog.getText(), /Not found/);
+    assert.ok(!(await (await dialog.findElement(By.xpath(".//label[.//b[normalize-space()='MP3']]/input"))).isEnabled()), 'MP3 export is switched off');
+    // The rest of the app still works: the recordings are listed.
+    await clickXp("//div[@role='dialog']" + XP.button('Done'));
+    assert.ok((await listed()) > 0, 'recordings are still listed');
+  });
+
+  // Only when testing an installed release (the release workflow): the ffmpeg in use must be the one shipped with the app.
+  it('uses the ffmpeg that came with the app', { skip: !process.env.E2E_EXPECT_BUNDLED_FFMPEG }, async () => {
+    await clickXp("//button[contains(.,'Settings')]");
+    const dialog = await find("//div[@role='dialog'][@aria-label='Settings']");
+    const found = await (await dialog.findElement(By.css('.path'))).getText();
+    assert.ok(found.toLowerCase().startsWith(dirname(exe).toLowerCase()), `ffmpeg should be inside ${dirname(exe)}, but is ${found}`);
+    await clickXp("//div[@role='dialog']" + XP.button('Done'));
   });
 
   it('in the editor: click to play from there, drag across to zoom, drag a name bar to reorder', async (t) => {
@@ -422,6 +446,7 @@ describe('the real app', () => {
     await tickRow('Good Two.aif');
     await clickXp(XP.button('Edit & export…'));
     await find("//div[@aria-label='Editor']");
+    await clickXp("//div[@aria-label='Editor']//button[@role='tab'][contains(.,'Fades')]");
     await (await find("//input[@aria-label='Fade in (seconds)']")).sendKeys('1');
     await (await find("//input[@aria-label='Fade out (seconds)']")).sendKeys('1');
     const before = new Set(dirFiles());
@@ -472,7 +497,7 @@ describe('the real app', () => {
       return /0:0\d\.\d/.test(t) && (await driver.findElements(By.xpath("//button[@aria-label='Pause']"))).length > 0 || /Cannot play|could not open|no default audio/i.test(t);
     }, 15000, 'playback to start or a clear error to appear');
     const playing = (await driver.findElements(By.xpath("//button[@aria-label='Pause']"))).length > 0;
-    t.diagnostic(playing ? 'AUDIO: playback started on the real output device' : "AUDIO: no playback; the app said: ${(await bodyText()).match(/Cannot play[^\n]*|could not open[^\n]*/i)?.[0]}");
+    t.diagnostic(playing ? 'AUDIO: playback started on the real output device' : `AUDIO: no playback; the app said: ${(await bodyText()).match(/Cannot play[^\n]*|could not open[^\n]*/i)?.[0]}`);
     const alive = await driver.findElement(By.css('main'));
     assert.ok(await alive.isDisplayed(), 'the app is still up');
   });
@@ -483,5 +508,37 @@ describe('the real app', () => {
     await pauses[0].click();
     await find("//button[@aria-label='Play']");
     assert.ok(await driver.findElement(By.css('main')).isDisplayed());
+  });
+
+  // Last on purpose: the editor remembers the loudness choice for the exports after it.
+  it('matches a target loudness on export and reports what it did', async () => {
+    await rescan();
+    await tickRow('Good Two.aif');
+    await clickXp(XP.button('Edit & export…'));
+    await find("//div[@aria-label='Editor']");
+    await clickXp("//div[@aria-label='Editor']//label[.//b[normalize-space()='AIFF']]/input"); // the MP3 test left MP3 selected
+    await clickXp("//div[@aria-label='Editor']//button[@role='tab'][contains(.,'Loudness')]");
+    // The loudness graph appears under the waveform (the timeline gets taller) and measures the recording.
+    const timeline = await find("//canvas[@data-testid='timeline']");
+    await driver.wait(async () => /height:\s*272px/.test((await timeline.getAttribute('style')) ?? ''), 10000, 'the loudness lane to appear');
+    await clickXp("//div[@aria-label='Editor']//label[contains(.,'Match a loudness')]/input");
+    const target = await find("//input[@id='lufs']");
+    await target.clear();
+    await target.sendKeys('-20');
+    // The preview is measured and planned by the real backend, and says what it is doing.
+    await untilText(/Playing with it on: the recording measures/i, 20000);
+    const before = new Set(dirFiles());
+    await clickXp("//div[@aria-label='Editor']" + XP.button('Export'));
+    await untilText(/Exported .*\.aif\. Loudness -(19\.[89]|20\.[0-2]) LUFS/i, 30000);
+
+    const added = dirFiles().filter((f) => !before.has(f) && f.endsWith('.aif'));
+    assert.equal(added.length, 1, `exactly one new .aif (got ${added.join(', ')})`);
+    const out = readAiff(join(work, added[0]));
+    const orig = readAiff(files.good2);
+    assert.equal(out.frames, orig.frames, 'same length');
+    // The middle of the file: the editor still has the fade from the earlier test.
+    const peak = (b) => Math.max(...Array.from({ length: 4000 }, (_, i) => Math.abs(sampleAt(b, Math.round(1.2 * RATE) + i))));
+    const [was, now] = [peak(orig.bytes), peak(out.bytes)];
+    assert.ok(now < was * 0.5 && now > was * 0.1, `quieter by roughly 11 dB (${was} -> ${now})`);
   });
 });
