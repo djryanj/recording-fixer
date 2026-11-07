@@ -6,6 +6,7 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ### Changed
 
+- chore(deps): bump ringbuf from 0.5.3 to 0.6.0 ([#21](https://github.com/djryanj/recording-fixer/pull/21))
 - chore(deps): bump the actions group across 1 directory with 5 updates ([#22](https://github.com/djryanj/recording-fixer/pull/22))
 
 ## [0.1.0] - Not yet released
