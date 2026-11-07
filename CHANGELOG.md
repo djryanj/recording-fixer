@@ -4,6 +4,10 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ## [Unreleased]
 
+### Changed
+
+- chore(deps): bump the actions group across 1 directory with 5 updates ([#22](https://github.com/djryanj/recording-fixer/pull/22))
+
 ## [0.1.0] - Not yet released
 
 First version, not yet tagged or published.
