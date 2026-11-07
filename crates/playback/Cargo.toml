@@ -19,7 +19,7 @@ dynamics.workspace = true
 edit-core.workspace = true
 cpal = "0.18"
 rubato = "5"
-ringbuf = "0.5"
+ringbuf = "0.6"
 serde = { version = "1", features = ["derive"] }
 thiserror.workspace = true
 

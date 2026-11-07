@@ -14,8 +14,9 @@ name: Auto changelog for bots
 # Set the secret AUTO_CHANGELOG_TOKEN (fine-grained PAT, this repo only, Contents: read/write) under
 # BOTH Settings > Secrets > Actions and Settings > Secrets > Dependabot.
 #
-# Dependabot stops rebasing a PR once someone else has pushed to it; use `@dependabot recreate`
-# (then `/auto-changelog` again) if you need a fresh branch.
+# Dependabot stops rebasing a PR once someone else has pushed to it, unless the commit message
+# contains `[dependabot skip]`, which this workflow adds. If a branch still gets stuck, use
+# `@dependabot recreate` (then `/auto-changelog` again).
 
 on:
   pull_request_target:
@@ -49,7 +50,7 @@ jobs:
     steps:
       - name: Resolve and authorise
         id: pr
-        uses: actions/github-script@d746ffe35508b1917358783b479e04febd2b8f71 # v9.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const bots = new Set(['dependabot[bot]']);
@@ -155,5 +156,6 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add CHANGELOG.md
           # No "[skip ci]": CI must run on this commit for the required check to report.
-          git commit -m "docs: add changelog entry for #${PR_NUMBER}"
+          # "[dependabot skip]" tells Dependabot this commit is not a human edit, so it keeps rebasing the PR.
+          git commit -m "docs: add changelog entry for #${PR_NUMBER} [dependabot skip]"
           git push origin "HEAD:refs/heads/${BRANCH}"
