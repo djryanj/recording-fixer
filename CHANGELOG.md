@@ -6,6 +6,7 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ### Changed
 
+- chore(deps-dev): bump the npm-minor-patch group across 1 directory with 3 updates ([#25](https://github.com/djryanj/recording-fixer/pull/25))
 - chore(deps-dev): bump jsdom from 30.1.3 to 31.0.0 in /ui ([#26](https://github.com/djryanj/recording-fixer/pull/26))
 - chore(deps): bump the actions group across 1 directory with 3 updates ([#5](https://github.com/djryanj/recording-fixer/pull/5))
 - chore(deps): bump the npm-minor-patch group in /ui with 3 updates ([#20](https://github.com/djryanj/recording-fixer/pull/20))
