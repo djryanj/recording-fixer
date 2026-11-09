@@ -6,6 +6,7 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ### Changed
 
+- chore(deps): bump the actions group across 1 directory with 3 updates ([#5](https://github.com/djryanj/recording-fixer/pull/5))
 - chore(deps): bump the npm-minor-patch group in /ui with 3 updates ([#20](https://github.com/djryanj/recording-fixer/pull/20))
 - chore(deps): bump the rust-minor-patch group across 1 directory with 2 updates ([#24](https://github.com/djryanj/recording-fixer/pull/24))
 - chore(deps): bump ringbuf from 0.5.3 to 0.6.0 ([#21](https://github.com/djryanj/recording-fixer/pull/21))
