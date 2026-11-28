@@ -1,0 +1,21 @@
+name: ASIO SDK (Windows)
+description: >-
+  Downloads and unpacks Steinberg's ASIO SDK and sets CPAL_ASIO_DIR. asio-sys can do this itself, but its
+  build script unzips with PowerShell's Expand-Archive, which fails on the current runner image
+  ("Cannot find an overload for ExtractToDirectory"), leaving an empty SDK folder.
+
+runs:
+  using: composite
+  steps:
+    - shell: pwsh
+      run: |
+        $zip = Join-Path $env:RUNNER_TEMP 'asiosdk.zip'
+        $out = Join-Path $env:RUNNER_TEMP 'asiosdk'
+        Invoke-WebRequest -Uri 'https://www.steinberg.net/asiosdk' -OutFile $zip -MaximumRetryCount 3 -RetryIntervalSec 5
+        New-Item -ItemType Directory -Force $out | Out-Null
+        tar -xf $zip -C $out
+        if ($LASTEXITCODE -ne 0) { throw 'could not unpack the ASIO SDK' }
+        # The zip has one versioned top folder; cpal wants the folder that holds host/ and common/.
+        $root = Get-ChildItem $out -Directory -Recurse | Where-Object { Test-Path (Join-Path $_.FullName 'host/asiodrivers.cpp') } | Select-Object -First 1
+        if (-not $root) { throw 'ASIO SDK layout not recognised (no host/asiodrivers.cpp)' }
+        "CPAL_ASIO_DIR=$($root.FullName)" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV

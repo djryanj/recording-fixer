@@ -96,6 +96,10 @@ jobs:
         shell: pwsh
         run: if (-not (Test-Path 'C:\Program Files\LLVM\bin\libclang.dll')) { throw 'libclang not found; the runner image no longer ships LLVM, so install it here (choco install llvm)' }
 
+      - name: ASIO SDK (Windows)
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/asio-sdk
+
       - name: UI dependencies
         run: npm --prefix ui ci
       - name: UI type check

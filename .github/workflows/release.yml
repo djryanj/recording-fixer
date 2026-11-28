@@ -92,6 +92,9 @@ jobs:
       - name: Install LLVM (ASIO needs libclang)
         if: runner.os == 'Windows'
         run: choco install llvm -y --no-progress
+      - name: ASIO SDK (Windows)
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/asio-sdk
       - name: Build the installer (Windows, with ASIO)
         if: runner.os == 'Windows'
         run: npm --prefix ui exec -- tauri build --config src-tauri/tauri.release.conf.json --bundles nsis
