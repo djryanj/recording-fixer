@@ -4,22 +4,9 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ## [Unreleased]
 
-### Changed
+## [0.1.0] - 2026-11-28
 
-- chore(deps): bump the actions group across 1 directory with 2 updates ([#29](https://github.com/djryanj/recording-fixer/pull/29))
-- chore(deps): bump the rust-minor-patch group across 1 directory with 5 updates ([#30](https://github.com/djryanj/recording-fixer/pull/30))
-- chore(deps): bump the npm-minor-patch group across 1 directory with 9 updates ([#32](https://github.com/djryanj/recording-fixer/pull/32))
-- chore(deps-dev): bump the npm-minor-patch group across 1 directory with 3 updates ([#25](https://github.com/djryanj/recording-fixer/pull/25))
-- chore(deps-dev): bump jsdom from 30.1.3 to 31.0.0 in /ui ([#26](https://github.com/djryanj/recording-fixer/pull/26))
-- chore(deps): bump the actions group across 1 directory with 3 updates ([#5](https://github.com/djryanj/recording-fixer/pull/5))
-- chore(deps): bump the npm-minor-patch group in /ui with 3 updates ([#20](https://github.com/djryanj/recording-fixer/pull/20))
-- chore(deps): bump the rust-minor-patch group across 1 directory with 2 updates ([#24](https://github.com/djryanj/recording-fixer/pull/24))
-- chore(deps): bump ringbuf from 0.5.3 to 0.6.0 ([#21](https://github.com/djryanj/recording-fixer/pull/21))
-- chore(deps): bump the actions group across 1 directory with 5 updates ([#22](https://github.com/djryanj/recording-fixer/pull/22))
-
-## [0.1.0] - Not yet released
-
-First version, not yet tagged or published.
+First public version.
 
 ### Added
 
@@ -42,6 +29,19 @@ First version, not yet tagged or published.
 - A private update check: one anonymous request to GitHub's public release list, at most daily, switchable off in Settings; it never downloads or installs anything. See [PRIVACY.md](PRIVACY.md): the app collects no data, ever.
 - Settings dialog, Auto/Dark/Light theme, and an About page with licence and non-affiliation notices.
 - CI for Windows and macOS (including the end-to-end suite against the real app on Windows, driven through msedgedriver), plus Dependabot and a `cargo deny` dependency policy. CI compiles no tools from source: the Tauri CLI is a UI dev dependency (`npm --prefix ui install`, used by the `just` recipes), and ffmpeg is a pinned, cached download.
+
+### Changed
+
+- chore(deps): bump the actions group across 1 directory with 2 updates ([#29](https://github.com/djryanj/recording-fixer/pull/29))
+- chore(deps): bump the rust-minor-patch group across 1 directory with 5 updates ([#30](https://github.com/djryanj/recording-fixer/pull/30))
+- chore(deps): bump the npm-minor-patch group across 1 directory with 9 updates ([#32](https://github.com/djryanj/recording-fixer/pull/32))
+- chore(deps-dev): bump the npm-minor-patch group across 1 directory with 3 updates ([#25](https://github.com/djryanj/recording-fixer/pull/25))
+- chore(deps-dev): bump jsdom from 30.1.3 to 31.0.0 in /ui ([#26](https://github.com/djryanj/recording-fixer/pull/26))
+- chore(deps): bump the actions group across 1 directory with 3 updates ([#5](https://github.com/djryanj/recording-fixer/pull/5))
+- chore(deps): bump the npm-minor-patch group in /ui with 3 updates ([#20](https://github.com/djryanj/recording-fixer/pull/20))
+- chore(deps): bump the rust-minor-patch group across 1 directory with 2 updates ([#24](https://github.com/djryanj/recording-fixer/pull/24))
+- chore(deps): bump ringbuf from 0.5.3 to 0.6.0 ([#21](https://github.com/djryanj/recording-fixer/pull/21))
+- chore(deps): bump the actions group across 1 directory with 5 updates ([#22](https://github.com/djryanj/recording-fixer/pull/22))
 
 ### Known limitations
 

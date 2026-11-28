@@ -128,7 +128,12 @@ function prepare(version, { filesOnly }) {
   // npm updates package-lock.json's matching fields in the same step.
   run('npm', ['--prefix', 'ui', 'version', version, '--no-git-tag-version', '--allow-same-version'], { quiet: true });
   // Cargo.lock lists the workspace crates with their versions.
-  run('cargo', ['update', '--workspace', '--offline'], { quiet: true });
+  // Offline first (no network needed); a stale local registry cache can't satisfy the lockfile, so then go online.
+  try {
+    run('cargo', ['update', '--workspace', '--offline'], { quiet: true });
+  } catch {
+    run('cargo', ['update', '--workspace'], { quiet: true });
+  }
   const files = ['Cargo.toml', 'Cargo.lock', 'ui/package.json', 'ui/package-lock.json'];
   if (isPrerelease(version)) {
     console.log('Pre-release: the changelog is left open for the final version.');
