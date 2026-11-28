@@ -161,6 +161,8 @@ jobs:
           New-Item -ItemType Directory -Force ui/e2e/.tools | Out-Null
           Invoke-WebRequest "https://msedgedriver.microsoft.com/$v/edgedriver_win64.zip" -OutFile ui/e2e/.tools/edgedriver.zip
           Expand-Archive ui/e2e/.tools/edgedriver.zip ui/e2e/.tools/edgedriver -Force
+      - name: ASIO SDK
+        uses: ./.github/actions/asio-sdk
       - name: Build the app
         run: npm --prefix ui exec -- tauri build --debug --no-bundle
         env:
