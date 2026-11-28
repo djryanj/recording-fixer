@@ -6,6 +6,7 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ### Changed
 
+- chore(deps): bump the actions group across 1 directory with 2 updates ([#29](https://github.com/djryanj/recording-fixer/pull/29))
 - chore(deps): bump the rust-minor-patch group across 1 directory with 5 updates ([#30](https://github.com/djryanj/recording-fixer/pull/30))
 - chore(deps): bump the npm-minor-patch group across 1 directory with 9 updates ([#32](https://github.com/djryanj/recording-fixer/pull/32))
 - chore(deps-dev): bump the npm-minor-patch group across 1 directory with 3 updates ([#25](https://github.com/djryanj/recording-fixer/pull/25))
