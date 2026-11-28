@@ -96,6 +96,10 @@ jobs:
         shell: pwsh
         run: if (-not (Test-Path 'C:\Program Files\LLVM\bin\libclang.dll')) { throw 'libclang not found; the runner image no longer ships LLVM, so install it here (choco install llvm)' }
 
+      - name: ASIO SDK (Windows)
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/asio-sdk
+
       - name: UI dependencies
         run: npm --prefix ui ci
       - name: UI type check
@@ -157,6 +161,8 @@ jobs:
           New-Item -ItemType Directory -Force ui/e2e/.tools | Out-Null
           Invoke-WebRequest "https://msedgedriver.microsoft.com/$v/edgedriver_win64.zip" -OutFile ui/e2e/.tools/edgedriver.zip
           Expand-Archive ui/e2e/.tools/edgedriver.zip ui/e2e/.tools/edgedriver -Force
+      - name: ASIO SDK
+        uses: ./.github/actions/asio-sdk
       - name: Build the app
         run: npm --prefix ui exec -- tauri build --debug --no-bundle
         env:
